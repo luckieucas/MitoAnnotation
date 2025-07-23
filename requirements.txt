@@ -1,0 +1,3 @@
+tifffile==2025.6.11
+micro-sam==1.6.0
+-e git+https://github.com/PytorchConnectomics/em_util.git@8cc736ffb2a59bf4a8232e0c15ee8a5527935a76#egg=em_util
