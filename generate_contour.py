@@ -53,7 +53,7 @@ def generate_contour_map(mask):
     Returns a uint8 volume where boundary voxels == 1.
     """
     binary = (mask > 0).astype(np.uint8)
-    contour = seg_to_instance_bd(binary, tzh=3)
+    contour = seg_to_instance_bd(binary, tsz_h=3)
     return contour.astype(np.uint8)
 
 
