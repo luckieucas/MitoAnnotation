@@ -42,7 +42,7 @@ def write_volume(vol, affine, out_path):
     if suffixes[-2:] == ['.nii', '.gz'] or suffixes[-1].lower() == '.nii':
         nib.save(nib.Nifti1Image(vol.astype(np.uint8), affine), out_path)
     elif suffixes[-1].lower() in ('.tif', '.tiff'):
-        tiff.imwrite(out_path, vol.astype(np.uint8))
+        tiff.imwrite(out_path, vol.astype(np.uint8),compression="zlib")
     else:
         raise ValueError(f"Unsupported output extension: {''.join(suffixes)}")
 
@@ -53,7 +53,7 @@ def generate_contour_map(mask):
     Returns a uint8 volume where boundary voxels == 1.
     """
     binary = (mask > 0).astype(np.uint8)
-    contour = seg_to_instance_bd(binary)
+    contour = seg_to_instance_bd(binary, tzh=3)
     return contour.astype(np.uint8)
 
 
@@ -61,6 +61,7 @@ def process_file(input_path, output_folder):
     vol, affine = read_volume(input_path)
     print(f"Unique labels in volume: {np.unique(vol)}")
     contour = generate_contour_map(vol)
+    contour[contour > 0] = 2
     binary = (vol > 0).astype(np.uint8)
     saved_mask = binary + contour
     saved_mask[saved_mask > 2] = 1
