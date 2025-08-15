@@ -47,20 +47,20 @@ def write_volume(vol, affine, out_path):
         raise ValueError(f"Unsupported output extension: {''.join(suffixes)}")
 
 
-def generate_contour_map(mask):
+def generate_contour_map(mask, width=3):
     """
     Given a 3D label mask array, compute instance contour map.
     Returns a uint8 volume where boundary voxels == 1.
     """
     binary = (mask > 0).astype(np.uint8)
-    contour = seg_to_instance_bd(binary, tsz_h=3)
+    contour = seg_to_instance_bd(binary, tsz_h=width)
     return contour.astype(np.uint8)
 
 
-def process_file(input_path, output_folder):
+def process_file(input_path, output_folder, width=3):
     vol, affine = read_volume(input_path)
     print(f"Unique labels in volume: {np.unique(vol)}")
-    contour = generate_contour_map(vol)
+    contour = generate_contour_map(vol, width=width)
     contour[contour > 0] = 2
     binary = (vol > 0).astype(np.uint8)
     saved_mask = binary + contour
@@ -91,6 +91,8 @@ if __name__ == "__main__":
                         help="Folder containing .tif/.tiff and/or .nii/.nii.gz mask files")
     parser.add_argument("-o", "--output_folder", required=True,
                         help="Folder to save contour maps")
+    parser.add_argument("-w", "--width", type=int, default=3,
+                        help="Width of the contour boundary (default: 3)")
     args = parser.parse_args()
 
     os.makedirs(args.output_folder, exist_ok=True)
@@ -100,6 +102,6 @@ if __name__ == "__main__":
         files.extend(glob(args.input_folder + pat))
     for path in tqdm(files, desc="Processing masks"):
         try:
-            process_file(path, args.output_folder)
+            process_file(path, args.output_folder, args.width)
         except Exception as e:
             print(f"[Error] {path}: {e}")
