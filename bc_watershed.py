@@ -104,7 +104,7 @@ def process_folder(input_folder, output_folder, save_tiff=False, save_nii=False)
         if save_tiff:
             out_tiff = os.path.join(output_folder, base + '_seg.tiff')
             # 保存原始 seg (Z, Y, X)
-            tiff.imwrite(out_tiff, seg)
+            tiff.imwrite(out_tiff, seg, compression='zlib')
             print(f"Saved TIFF: {out_tiff}")
 
 if __name__ == "__main__":

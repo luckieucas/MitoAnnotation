@@ -97,7 +97,7 @@ def segment_slice_and_get_boundary(
 
         # ✅ 优化点: 一次性将所有提示点传入模型
         # 使用 return_all=False 直接获取最佳掩码，避免处理多个返回结果
-        mask, _, _ = segment_from_points(
+        mask = segment_from_points(
             predictor,
             points_coords[:, ::-1],  # SAM 需要 (y, x) 顺序的坐标
             point_labels,
@@ -364,7 +364,7 @@ def main():
             boundaries_for_axis = process_volume_for_one_dimension(
                 img_vol, mask_vol, args.model_type, axis, args.n_points, args.erosion_width, args.label_list
             )
-            tiff.imwrite(save_path, boundaries_for_axis)
+            tiff.imwrite(save_path, boundaries_for_axis, compression='zlib')
             print(f"Boundaries for axis {axis_name} saved to: {save_path}")
         
         # 将结果存入字典
@@ -417,16 +417,16 @@ def main():
     print(f"Processing complete. Generated {current_new_label - 1} new labels.")
     
     # Save the component-filtered mask.
-    tiff.imwrite(args.mask_path.replace(".tiff", "_cc3d.tiff"), processed_mask)
+    tiff.imwrite(args.mask_path.replace(".tiff", "_cc3d.tiff"), processed_mask, compression='zlib')
     
     # Apply hole-filling to the component-filtered mask and save it.
     print("Applying 3D hole filling...")
     processed_mask_filled = process_multi_label_mask(processed_mask)
-    tiff.imwrite(args.mask_path.replace(".tiff", "_cc3d_fillholes.tiff"), processed_mask_filled)
+    tiff.imwrite(args.mask_path.replace(".tiff", "_cc3d_fillholes.tiff"), processed_mask_filled, compression='zlib')
     
     # Save the final merged boundaries mask based on the input mask's filename.
     merged_save_path = args.mask_path.replace(".tiff", "_boundaries_merged.tiff")
-    tiff.imwrite(merged_save_path, final_merged_boundaries)
+    tiff.imwrite(merged_save_path, final_merged_boundaries, compression='zlib')
     print(f"Final merged boundaries saved to: {merged_save_path}")
 
 
