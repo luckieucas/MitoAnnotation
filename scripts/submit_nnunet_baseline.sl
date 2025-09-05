@@ -33,6 +33,6 @@ conda activate sam2_mito
 #nnUNetv2_plan_and_preprocess -d $TASK_ID --verify_dataset_integrity -c 3d_fullres
 
 #nnUNetv2_train $TASK_ID 3d_fullres 0
-python auto_train_nnunet.py --data_folder /projects/weilab/dataset/MitoLE/cellmap24_liver --output_dir /projects/weilab/liupeng/nnUNet --dataset_id Dataset006_MitoHardLiver --fold all
+python auto_train_nnunet.py --data_folder  --output_dir /projects/weilab/liupeng/nnUNet --dataset_id Dataset006_MitoHardLiver --fold all
 # Print end time
 echo "Task completed at $(date)"
