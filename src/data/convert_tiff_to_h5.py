@@ -31,19 +31,23 @@ def relabel_data(data: np.ndarray) -> np.ndarray:
 def main():
     # Set up command-line argument parsing
     parser = argparse.ArgumentParser(
-        description="Convert a TIFF segmentation to HDF5 with relabeled consecutive labels"
+        description="Convert a TIFF file (segmentation or image) to HDF5 format"
     )
     parser.add_argument(
         "--input_tiff",
-        help="Path to the input TIFF file containing segmentation labels"
+        help="Path to the input TIFF file"
     )
     parser.add_argument(
         "--output_h5",
-        help="Path to the output HDF5 file to save the remapped labels"
+        help="Path to the output HDF5 file"
+    )
+    parser.add_argument(
+        "--type", choices=["seg", "img"], required=True,
+        help="Type of input data: 'seg' for segmentation labels, 'img' for image data"
     )
     parser.add_argument(
         "--dtype", choices=["uint8", "uint16"], default="uint16",
-        help="Data type for the output array (default: uint8)"
+        help="Data type for the output array (default: uint16)"
     )
     parser.add_argument(
         "--compression", type=str, default="gzip",
@@ -55,25 +59,30 @@ def main():
     )
     args = parser.parse_args()
 
-    # Read the segmentation TIFF file
+    # Read the TIFF file
     print(f"Reading TIFF file: {args.input_tiff}")
-    seg_data = tiff.imread(args.input_tiff)
-    print(f"Seg shape:{seg_data.shape}")
-    # Relabel the segmentation data
-    seg_data = relabel_data(seg_data)
+    data = tiff.imread(args.input_tiff)
+    print(f"Data shape: {data.shape}")
+    
+    # Only relabel if the input type is segmentation
+    if args.type == "seg":
+        print("Processing segmentation data - applying relabeling...")
+        data = relabel_data(data)
+        print(f"Max label value after remapping: {np.max(data)}")
+    else:
+        print("Processing image data - no relabeling applied")
 
     # Convert to desired data type if needed
     target_dtype = np.dtype(args.dtype)
-    if seg_data.dtype != target_dtype:
-        seg_data = seg_data.astype(target_dtype)
-    print(f"Max label value after remapping: {np.max(seg_data)}")
+    if data.dtype != target_dtype:
+        data = data.astype(target_dtype)
 
-    # Write the remapped data to an HDF5 file
+    # Write the data to an HDF5 file
     print(f"Saving to HDF5 file: {args.output_h5}")
     with h5py.File(args.output_h5, "w") as h5_file:
         h5_file.create_dataset(
             name="main",
-            data=seg_data,
+            data=data,
             dtype=target_dtype,
             compression=args.compression,
             compression_opts=args.compression_level,

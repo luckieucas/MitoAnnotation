@@ -1,38 +1,38 @@
 #!/bin/bash
-#SBATCH --job-name=train_nnUNet        # Job name
-#SBATCH --time=24:00:00                # Maximum runtime
+#SBATCH --job-name=evaluate_res        # Job name
+#SBATCH --time=12:00:00                # Maximum runtime
 #SBATCH --nodes=1                      # Number of nodes
 #SBATCH --ntasks=1                     # Number of tasks
 #SBATCH --cpus-per-task=6              # Number of CPU cores per task
 #SBATCH --gres=gpu:1                   # Number of GPUs per task
 #SBATCH --mem=64gb                     # Memory allocation
-#SBATCH --partition=medium             # Partition to submit the job
+#SBATCH --partition=short             # Partition to submit the job
 #SBATCH --mail-type=BEGIN,END,FAIL     # Email notifications (on job start, end, or fail)
 #SBATCH --mail-user=liupen@bc.edu      # Email address for notifications
-#SBATCH --output=logs/%j_nnunet.out  
+#SBATCH --output=logs/%j_evaluate_res.out  
 
 # Activate the Conda environment
 source ~/miniconda3/bin/activate
 conda activate sam2_mito
 
 # Check if task ID is provided
-if [ -z "$1" ]; then
-  echo "Error: No task ID provided. Usage: sbatch train.sh <task_id>"
-  exit 1
-fi
+# if [ -z "$1" ]; then
+#   echo "Error: No task ID provided. Usage: sbatch train.sh <task_id>"
+#   exit 1
+# fi
 
-TASK_ID=$1
+# TASK_ID=$1
 
-# Print debug information
-echo "Job ID: $SLURM_JOB_ID"
-echo "Running on node: $(hostname)"
-echo "Start time: $(date)"
-echo "Using nnUNet task ID: $TASK_ID"
+# # Print debug information
+# echo "Job ID: $SLURM_JOB_ID"
+# echo "Running on node: $(hostname)"
+# echo "Start time: $(date)"
+# echo "Using nnUNet task ID: $TASK_ID"
 
 # Run the nnUNet training command with specified task ID
 #nnUNetv2_plan_and_preprocess -d $TASK_ID --verify_dataset_integrity -c 3d_fullres
 
-nnUNetv2_train $TASK_ID 3d_fullres 0
-
+#nnUNetv2_train $TASK_ID 3d_fullres 0
+python evaluate_res.py --gt_file /projects/weilab/liupeng/dataset/mito/han24/pos1_mito.tiff --pred_file /projects/weilab/liupeng/dataset/mito/han24/pos1_mito_sdt_pred.tiff
 # Print end time
-echo "Training completed at $(date)"
+echo "Task completed at $(date)"

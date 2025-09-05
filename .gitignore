@@ -1,2 +1,57 @@
-/logs
-/tmp*
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+tmp*/
+pymp*/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 数据文件
+*.tiff
+*.tif
+*.h5
+*.hdf5
+*.zarr
+
+# 模型文件
+*.pth
+*.pkl
+*.pickle
+checkpoints/
+
+# 输出文件
+figs/
+output/
+results/
+predictions/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE文件
+.vscode/
+.idea/
+*.sublime-*
+
+# 环境文件
+.env
+.venv
+env/
+venv/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# 测试覆盖率
+htmlcov/
+.coverage
+.pytest_cache/

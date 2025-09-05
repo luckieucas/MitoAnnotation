@@ -21,7 +21,7 @@ from skimage.morphology import ball, remove_small_objects
 import tifffile as tiff
 import nibabel as nib
 import SimpleITK as sitk
-
+from scipy.ndimage import zoom
 
 # ---------- I/O helpers ----------------------------------------------------- #
 def read_volume(path: Path) -> Tuple[np.ndarray, Union[sitk.Image, None]]:
@@ -44,7 +44,7 @@ def save_volume(vol: np.ndarray, ref_img: Union[sitk.Image, None], path: Path) -
         img = nib.Nifti1Image(vol.astype(np.uint16), affine if affine is not None else np.eye(4))
         nib.save(img, str(path))
     elif path.suffix.lower() in (".tif", ".tiff"):
-        tiff.imwrite(str(path), vol.astype(np.uint16))
+        tiff.imwrite(str(path), vol.astype(np.uint16), compression="zlib")
     else:
         raise ValueError(f"Unsupported output type: {path}")
 
@@ -96,7 +96,7 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--output", required=True, type=Path, help="Output file path")
     p.add_argument("--min_seed_vox", type=int, default=50, help="Minimum voxels to keep a seed label")
     p.add_argument("--seed_dilate_iter", type=int, default=1, help="Number of dilations applied to seeds")
-    p.add_argument("--min_final_vox", type=int, default=200, help="Remove final labels smaller than this")
+    p.add_argument("--min_final_vox", type=int, default=500, help="Remove final labels smaller than this")
     return p.parse_args()
 
 
@@ -110,6 +110,13 @@ def main() -> None:
 
     # Load coarse instance mask
     seeds, _ = read_volume(args.instances)
+    
+    if seeds.shape != binary.shape:
+        print(f"Resizing seeds to binary shape: {seeds.shape} -> {binary.shape}")
+        # resize seeds to binary shape
+        zoom_factors = [t / s for t, s in zip(binary.shape, seeds.shape)]
+        seeds = zoom(seeds, zoom_factors, order=0)
+    
     #seeds = seeds[::2, ::2, ::2]  # Downsample by factor of 2
     if binary.shape != seeds.shape:
         raise ValueError("Binary mask and instance mask must have identical shapes.")

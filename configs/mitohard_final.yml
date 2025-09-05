@@ -1,0 +1,329 @@
+name: mitohard
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - hcc
+  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  # Core Python and system libraries
+  - python=3.12.9
+  - pip=25.1.1
+  - setuptools=80.9.0
+  - wheel=0.45.1
+  
+  # CUDA and PyTorch ecosystem
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=12.1
+  - pytorch-mutex=1.0=cuda
+  
+  # Core scientific computing
+  - numpy=1.26.4
+  - scipy=1.15.2
+  - scikit-learn=1.6.1
+  - scikit-image=0.25.0
+  - pandas=2.2.3
+  - matplotlib=3.10.0
+  - seaborn=0.13.2
+  
+  # Image processing and computer vision
+  - opencv=4.11.0
+  - pillow=11.1.0
+  - imageio=2.37.0
+  - tifffile=2025.2.18
+  
+  # Deep learning frameworks
+  - tensorboard=2.19.0
+  - tensorboard-data-server=0.7.0
+  
+  # Jupyter and development tools
+  - jupyter=1.1.1
+  - jupyterlab=4.3.6
+  - ipython=8.30.0
+  - ipykernel=6.29.5
+  - notebook=7.3.3
+  
+  # Data formats and I/O
+  - h5py=3.13.0
+  - zarr=3.1.2
+  - hdf5=1.14.3
+  
+  # System libraries
+  - openssl=3.0.17
+  - ca-certificates=2025.7.15
+  - certifi=2025.8.3
+  - sqlite=3.45.3
+  - libffi=3.4.4
+  - zlib=1.2.13
+  - bzip2=1.0.8
+  - xz=5.6.4
+  - lz4-c=1.9.4
+  - zstd=1.5.6
+  
+  # GUI and visualization
+  - qt=6.7.3
+  - pyqt=6.7.1
+  - napari=0.6.1
+  - vispy=0.15.2
+  
+  # Network and web
+  - requests=2.32.3
+  - urllib3=2.3.0
+  - httpx=0.28.1
+  
+  # Utilities
+  - tqdm=4.67.1
+  - click=8.1.8
+  - pyyaml=6.0.2
+  - packaging=24.2
+  - psutil=7.0.0
+  - filelock=3.13.1
+  - fsspec=2025.3.2
+  
+  # Development and testing
+  - pytest=8.0.0
+  - black=24.0.0
+  - flake8=7.0.0
+  
+  # pip dependencies
+  - pip:
+      # Core ML/AI libraries
+      - torch==2.5.1
+      - torchvision==0.20.1
+      - torchaudio==2.5.1
+      - torchmetrics==1.7.4
+      - pytorch-lightning==2.5.2
+      - lightning==2.5.2
+      - lightning-utilities==0.14.3
+      
+      # Computer vision and segmentation
+      - segment-anything==1.0.1
+      - sam-2==1.0
+      - micro-sam==1.6.0
+      - mobile-sam==1.0
+      - monai==1.4.0
+      - nnunetv2==2.5.1
+      - batchgenerators==0.25.1
+      - batchgeneratorsv2==0.2.3
+      - dynamic-network-architectures==0.3.1
+      
+      # Medical imaging
+      - nibabel==5.3.2
+      - pydicom==3.0.1
+      - python-gdcm==3.0.24.1
+      - dicom2nifti==2.6.0
+      - simpleitk==2.4.1
+      - connected-components-3d==3.23.0
+      
+      # Image processing
+      - albumentations==2.0.5
+      - albucore==0.0.23
+      - qudida==0.0.4
+      - kornia==0.8.1
+      - kornia-rs==0.1.9
+      - mahotas==1.4.18
+      - skan==0.12.1
+      - trackastra==0.3.2
+      
+      # Data handling
+      - einops==0.8.1
+      - fft-conv-pytorch==1.2.0
+      - numcodecs==0.16.2
+      - zarr==3.1.2
+      - blosc2==3.3.0
+      - lz4==4.4.4
+      - zstandard==0.23.0
+      
+      # Visualization and GUI
+      - napari==0.6.1
+      - empanada-napari==1.2
+      - magicgui==0.10.1
+      - superqt==0.7.5
+      - qtpy==2.4.3
+      - vispy==0.15.2
+      - vtk==9.5.0
+      
+      # Jupyter ecosystem
+      - jupyter==1.1.1
+      - jupyterlab==4.3.6
+      - jupyter-client==8.6.3
+      - jupyter-core==5.7.2
+      - jupyter-events==0.12.0
+      - jupyter-lsp==2.2.5
+      - jupyter-server==2.15.0
+      - jupyter-server-terminals==0.5.3
+      - jupyterlab-pygments==0.3.0
+      - jupyterlab-server==2.27.3
+      - jupyterlab-widgets==3.0.13
+      - ipywidgets==8.1.5
+      - widgetsnbextension==4.0.13
+      - notebook==7.3.3
+      - notebook-shim==0.2.4
+      - nbclient==0.10.2
+      - nbconvert==7.16.6
+      - nbformat==5.10.4
+      
+      # Image I/O
+      - imageio==2.37.0
+      - tifffile==2025.2.18
+      - pillow==11.1.0
+      - opencv-python==4.11.0.86
+      - opencv-python-headless==4.11.0.86
+      - imagecodecs==2025.3.30
+      - imagehash==4.3.2
+      
+      # Data formats
+      - h5py==3.13.0
+      - zarr==3.1.2
+      - openpyxl==3.1.5
+      - xarray==2025.1.2
+      
+      # Configuration and utilities
+      - pyyaml==6.0.2
+      - hydra-core==1.3.2
+      - omegaconf==2.3.0
+      - yacs==0.1.8
+      - configargparse==1.7.1
+      - python-dotenv==1.1.1
+      
+      # Logging and monitoring
+      - wandb==0.19.9
+      - tensorboard==2.19.0
+      - tensorboard-data-server==0.7.2
+      - tensorboardx==2.6.2.2
+      - loguru==0.7.3
+      - python-json-logger==3.3.0
+      - sentry-sdk==2.25.1
+      
+      # Development tools
+      - gitpython==3.1.44
+      - pre-commit==3.6.0
+      - black==24.0.0
+      - isort==5.13.2
+      - flake8==7.0.0
+      - mypy==1.8.0
+      - pytest==8.0.0
+      - pytest-cov==4.1.0
+      - pytest-xdist==3.5.0
+      
+      # Network and web
+      - requests==2.32.3
+      - urllib3==2.3.0
+      - httpx==0.28.1
+      - aiohttp==3.12.14
+      - websocket-client==1.8.0
+      
+      # Async and concurrency
+      - anyio==4.9.0
+      - asyncio-mqtt==0.16.2
+      - nest-asyncio==1.6.0
+      
+      # Data validation
+      - pydantic==2.11.3
+      - pydantic-core==2.33.1
+      - pydantic-settings==2.10.1
+      - pydantic-compat==0.1.2
+      - email-validator==2.2.0
+      
+      # Type hints and annotations
+      - typing-extensions==4.12.2
+      - typing-inspection==0.4.0
+      - types-python-dateutil==2.9.0.20241206
+      
+      # Date and time
+      - python-dateutil==2.9.0.post0
+      - pytz==2025.2
+      - tzdata==2025.2
+      
+      # Text processing
+      - markdown==3.7
+      - mistune==3.1.3
+      - beautifulsoup4==4.13.3
+      - bleach==6.2.0
+      - defusedxml==0.7.1
+      
+      # Compression and encoding
+      - brotli==1.1.0
+      - lz4==4.4.4
+      - zstandard==0.23.0
+      - blosc2==3.3.0
+      
+      # System utilities
+      - psutil==7.0.0
+      - gputil==1.4.0
+      - humanize==4.12.3
+      - tqdm==4.67.1
+      - click==8.1.8
+      - typer==0.16.0
+      - rich==14.0.0
+      - colorama==0.4.6
+      - coloredlogs==15.0.1
+      
+      # File handling
+      - fsspec==2025.3.2
+      - filelock==3.13.1
+      - portalocker==3.1.1
+      - send2trash==1.8.3
+      
+      # Math and statistics
+      - sympy==1.13.1
+      - mpmath==1.3.0
+      - statsmodels==0.14.1
+      
+      # Machine learning utilities
+      - scikit-learn==1.6.1
+      - imbalanced-learn==0.11.0
+      - optuna==3.5.0
+      - hyperopt==0.2.7
+      
+      # Additional utilities
+      - acvl-utils==0.2.5
+      - connectomics==0.1
+      - edt==3.0.0
+      - crc32c==2.7.1
+      - cython==3.0.12
+      - future==1.0.0
+      - graphviz==0.20.3
+      - grpcio==1.71.0
+      - h11==0.14.0
+      - iopath==0.1.10
+      - linecache2==1.0.0
+      - msgpack==1.1.0
+      - ndindex==1.9.2
+      - numexpr==2.10.2
+      - numpy-groupies==0.11.2
+      - overrides==7.7.0
+      - pandocfilters==1.5.1
+      - prometheus-client==0.21.1
+      - propcache==0.3.2
+      - protobuf==5.29.4
+      - py-cpuinfo==9.0.0
+      - pycparser==2.22
+      - pyzmq==26.4.0
+      - referencing==0.36.2
+      - rfc3339-validator==0.1.4
+      - rfc3986-validator==0.1.1
+      - rpds-py==0.24.0
+      - setproctitle==1.3.5
+      - simsimd==6.2.1
+      - smmap==5.0.2
+      - sniffio==1.3.1
+      - soupsieve==2.6
+      - stringzilla==3.12.4
+      - terminado==0.18.1
+      - tinycss2==1.4.0
+      - traceback2==1.4.0
+      - unittest2==1.1.0
+      - uri-template==1.3.0
+      - webcolors==24.11.1
+      - webencodings==0.5.1
+      - werkzeug==3.1.3
+      - wrapt==1.17.2
+      - yarl==1.20.1
+      - zipp==3.23.0
+
+prefix: /projects/weilab/liupeng/conda/envs/mitohard
