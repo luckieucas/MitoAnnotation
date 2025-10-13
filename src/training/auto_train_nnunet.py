@@ -433,7 +433,7 @@ class AutoTrainNnunet:
         try:
             # 运行bc_watershed.py
             cmd = [
-                sys.executable, "bc_watershed.py",
+                sys.executable, "./src/postprocessing/bc_watershed.py",
                 "-i", str(self.images_ts_pred_dir),
                 "-o", str(self.final_results_dir),
                 "--save-tiff"
@@ -469,7 +469,7 @@ class AutoTrainNnunet:
                     logger.info(f"评估: {pred_file.name} vs {gt_file.name}")
                     
                     cmd = [
-                        sys.executable, "evaluate_res.py",
+                        sys.executable, "./src/evaluation/evaluate_res.py",
                         "--pred_file", str(pred_file),
                         "--gt_file", str(gt_file)
                     ]
@@ -526,13 +526,6 @@ class AutoTrainNnunet:
             if not skip_prediction:
                 logger.info("=== 步骤5: nnunet预测 ===")
                 self.nnunet_predict(fold, trainer)
-            else:
-                logger.info("=== 步骤5: 跳过nnunet预测 ===")
-                
-                # 如果跳过预测，也跳过后续的后处理和评估
-                skip_postprocess = True
-                skip_evaluation = True
-                logger.info("由于跳过预测，自动跳过后处理和评估步骤")
             
             # 6. 后处理
             if not skip_postprocess:

@@ -33,6 +33,6 @@ conda activate sam2_mito
 #nnUNetv2_plan_and_preprocess -d $TASK_ID --verify_dataset_integrity -c 3d_fullres
 
 #nnUNetv2_train $TASK_ID 3d_fullres 0
-python src/evaluation/evaluate_res.py --gt_file /projects/weilab/liupeng/dataset/mito/han24/neg1_mito_refined.tiff --pred_file /projects/weilab/liupeng/dataset/mito/han24/neg1_mito_sdt_pred.tiff
+python src/evaluation/evaluate_res.py --gt_file /projects/weilab/liupeng/dataset/mito/han24/pos1_mito_refined.tiff --pred_file /projects/weilab/liupeng/dataset/mito/han24/pos1_mito_sdt_pred.tiff
 # Print end time
 echo "Task completed at $(date)"

@@ -22,21 +22,50 @@ import logging
 from scipy import ndimage
 from skimage.segmentation import watershed
 from skimage.morphology import disk, ball
+import multiprocessing as mp
+from functools import partial
+import time
 try:
     from skimage.feature import peak_local_maxima
 except ImportError:
     from skimage.feature import peak_local_max as peak_local_maxima
 
 # 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('zarr_conversion.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+def setup_logging(log_level=logging.INFO, log_file='zarr_conversion.log'):
+    """
+    设置多进程安全的日志配置
+    
+    Args:
+        log_level: 日志级别
+        log_file: 日志文件路径
+    """
+    # 创建根日志记录器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # 清除现有的处理器
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # 创建格式器
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # 文件处理器
+    file_handler = logging.FileHandler(log_file, mode='a')
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    return root_logger
+
+# 初始化日志
+logger = setup_logging()
 
 def detect_data_format(zarr_data):
     """
@@ -242,10 +271,33 @@ def read_zarr_and_save_tiff(zarr_path, output_dir, compression='lzw', threshold=
     except Exception as e:
         logger.error(f"处理 {zarr_path} 时出错: {e}")
 
-def process_zarr_folder(input_folder, output_folder, compression='lzw', threshold=0.0, 
-                       min_distance=5, min_size=100, apply_watershed=True):
+def process_single_zarr(args):
     """
-    处理文件夹中的所有zarr文件
+    处理单个zarr文件的包装函数，用于多进程处理
+    
+    Args:
+        args: 包含所有参数的元组
+    """
+    zarr_file, output_folder, compression, threshold, min_distance, min_size, apply_watershed = args
+    
+    # 为每个进程创建独立的日志记录器
+    process_logger = logging.getLogger(f"Process-{os.getpid()}")
+    process_logger.setLevel(logging.INFO)
+    
+    try:
+        process_logger.info(f"进程 {os.getpid()} 开始处理: {zarr_file}")
+        read_zarr_and_save_tiff(str(zarr_file), str(output_folder), compression, 
+                               threshold, min_distance, min_size, apply_watershed)
+        process_logger.info(f"进程 {os.getpid()} 完成处理: {zarr_file}")
+        return True, str(zarr_file)
+    except Exception as e:
+        process_logger.error(f"进程 {os.getpid()} 处理 {zarr_file} 时出错: {e}")
+        return False, str(zarr_file)
+
+def process_zarr_folder(input_folder, output_folder, compression='lzw', threshold=0.0, 
+                       min_distance=5, min_size=100, apply_watershed=True, num_processes=None):
+    """
+    处理文件夹中的所有zarr文件（支持并行处理）
     
     Args:
         input_folder: 包含zarr文件的输入文件夹
@@ -255,6 +307,7 @@ def process_zarr_folder(input_folder, output_folder, compression='lzw', threshol
         min_distance: watershed分割中局部最大值之间的最小距离
         min_size: 分割区域的最小大小
         apply_watershed: 是否应用watershed分割
+        num_processes: 并行进程数，None表示使用CPU核心数
     """
     input_path = Path(input_folder)
     output_path = Path(output_folder)
@@ -271,10 +324,47 @@ def process_zarr_folder(input_folder, output_folder, compression='lzw', threshol
     
     logger.info(f"找到 {len(zarr_files)} 个zarr文件")
     
-    # 处理每个zarr文件
-    for zarr_file in tqdm(zarr_files, desc="处理zarr文件"):
-        read_zarr_and_save_tiff(str(zarr_file), str(output_path), compression, 
-                               threshold, min_distance, min_size, apply_watershed)
+    # 确定进程数
+    if num_processes is None:
+        num_processes = min(mp.cpu_count(), len(zarr_files))
+    
+    logger.info(f"使用 {num_processes} 个进程进行并行处理")
+    
+    # 准备参数
+    process_args = [(zarr_file, output_path, compression, threshold, min_distance, min_size, apply_watershed) 
+                   for zarr_file in zarr_files]
+    
+    # 如果只有一个文件或进程数设为1，则串行处理
+    if num_processes == 1 or len(zarr_files) == 1:
+        logger.info("使用串行处理模式")
+        for args in tqdm(process_args, desc="处理zarr文件"):
+            process_single_zarr(args)
+    else:
+        # 并行处理
+        logger.info("使用并行处理模式")
+        start_time = time.time()
+        
+        with mp.Pool(processes=num_processes) as pool:
+            # 使用imap_unordered来支持进度条
+            results = list(tqdm(
+                pool.imap_unordered(process_single_zarr, process_args),
+                total=len(process_args),
+                desc="处理zarr文件"
+            ))
+        
+        end_time = time.time()
+        
+        # 统计结果
+        successful = sum(1 for success, _ in results if success)
+        failed = len(results) - successful
+        
+        logger.info(f"并行处理完成: 成功 {successful} 个，失败 {failed} 个")
+        logger.info(f"总耗时: {end_time - start_time:.2f} 秒")
+        
+        # 报告失败的文件
+        if failed > 0:
+            failed_files = [filename for success, filename in results if not success]
+            logger.warning(f"失败的文件: {failed_files}")
 
 def validate_zarr_file(zarr_path):
     """
@@ -319,7 +409,7 @@ def main():
     parser = argparse.ArgumentParser(description='将zarr文件转换为压缩的TIFF文件')
     parser.add_argument('input_folder', help='包含zarr文件的输入文件夹路径')
     parser.add_argument('output_folder', help='输出TIFF文件的文件夹路径')
-    parser.add_argument('--compression', '-c', default='lzw', 
+    parser.add_argument('--compression', '-c', default='zlib', 
                        choices=['lzw', 'deflate', 'jpeg', 'none'],
                        help='TIFF压缩方式 (默认: lzw)')
     parser.add_argument('--validate', '-v', action='store_true',
@@ -334,16 +424,26 @@ def main():
                        help='分割区域的最小大小 (默认: 100)')
     parser.add_argument('--no-watershed', action='store_true',
                        help='禁用watershed分割，只保存原始数据')
+    parser.add_argument('--processes', '-p', type=int, default=None,
+                       help='并行进程数，默认为CPU核心数')
+    parser.add_argument('--serial', action='store_true',
+                       help='强制使用串行处理模式')
     
     args = parser.parse_args()
     
     # 设置日志级别
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
+    setup_logging(getattr(logging, args.log_level))
     
     # 检查输入文件夹是否存在
     if not os.path.exists(args.input_folder):
         logger.error(f"错误: 输入文件夹 {args.input_folder} 不存在")
         return
+    
+    # 确定进程数
+    if args.serial:
+        num_processes = 1
+    else:
+        num_processes = args.processes
     
     logger.info(f"输入文件夹: {args.input_folder}")
     logger.info(f"输出文件夹: {args.output_folder}")
@@ -352,6 +452,7 @@ def main():
     logger.info(f"最小距离: {args.min_distance}")
     logger.info(f"最小区域大小: {args.min_size}")
     logger.info(f"启用watershed: {not args.no_watershed}")
+    logger.info(f"并行进程数: {num_processes if num_processes else '自动检测'}")
     
     # 如果启用验证，先验证所有zarr文件
     if args.validate:
@@ -372,7 +473,9 @@ def main():
     
     # 处理zarr文件
     process_zarr_folder(args.input_folder, args.output_folder, args.compression,
-                       args.threshold, args.min_distance, args.min_size, not args.no_watershed)
+                       args.threshold, args.min_distance, args.min_size, not args.no_watershed, num_processes)
 
 if __name__ == "__main__":
+    # 多进程保护
+    mp.set_start_method('spawn', force=True)
     main()

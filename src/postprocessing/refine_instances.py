@@ -105,7 +105,13 @@ def main() -> None:
 
     # Load volumes
     binary, affine_bin = read_volume(args.binary)
-    binary[binary > 1] = 0  # Ensure binary mask is boolean
+    if np.unique(binary).shape[0] > 3:
+        # not the BC mask
+        print(f"Not the BC mask: {args.binary}")
+        binary[binary > 1] = 1
+    else:
+        print(f"The BC mask: {args.binary}")
+        binary[binary > 1] = 0  # Ensure binary mask is boolean
     #binary = binary[::2, ::2, ::2]  # Downsample by factor of 2
 
     # Load coarse instance mask

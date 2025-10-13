@@ -107,7 +107,7 @@ def process_mask(input_path, output_path, target_label, min_size=30):
 
     # Save the processed mask file
     print(f"The maximum detected label value is: {np.max(processed_mask)}")
-    tiff.imwrite(output_path, processed_mask.astype(mask.dtype))
+    tiff.imwrite(output_path, processed_mask.astype(mask.dtype), compression="zlib")
     print(f"Processed mask has been saved to: {output_path}")
 
 if __name__ == "__main__":

@@ -86,7 +86,7 @@ def process_folder(input_folder, output_folder, save_tiff=False, save_nii=False)
         print(f"{fname}: semantic shape {semantic.shape}")
 
         # 计算分割
-        seg = bc_watershed(semantic, boundary)
+        seg = bc_watershed(semantic, boundary, thres1=0.95, thres2=0.5, thres3=0.6, thres_small=64, scale_factors=(1.0, 1.0, 1.0), seed_thres=20)
 
         # 重排 axes Z,Y,X → X,Y,Z 用于 NIfTI
         if save_nii:
