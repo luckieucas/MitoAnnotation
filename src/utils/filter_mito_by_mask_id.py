@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 根据指定的mask id过滤mito数据的脚本
-读取mitoEM-H_den_mask.h5和mitoEM-H_den_mito.h5文件，
+读取mask和mito的tiff文件，
 过滤掉不在指定mask id列表中的mito
 """
 
 import os
-import h5py
+import tifffile
 import numpy as np
 import argparse
 from pathlib import Path
@@ -19,37 +19,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def read_h5_file(file_path, dataset_key=None):
+def read_tiff_file(file_path):
     """
-    读取h5文件并返回数据
+    读取tiff文件并返回数据
     
     Args:
-        file_path: h5文件路径
-        dataset_key: 数据集键名，如果为None则自动选择第一个
+        file_path: tiff文件路径
     
     Returns:
         numpy数组
     """
     try:
-        with h5py.File(file_path, 'r') as f:
-            logger.info(f"文件 {file_path} 中的数据集: {list(f.keys())}")
-            
-            if dataset_key and dataset_key in f:
-                data = f[dataset_key][()]
-                logger.info(f"使用指定的数据集键 '{dataset_key}'")
-            else:
-                # 自动选择第一个数据集
-                first_key = list(f.keys())[0]
-                data = f[first_key][()]
-                logger.info(f"自动选择数据集 '{first_key}'")
-            
-            logger.info(f"数据形状: {data.shape}, 数据类型: {data.dtype}")
-            return data
+        data = tifffile.imread(file_path)
+        logger.info(f"成功读取文件: {file_path}")
+        logger.info(f"数据形状: {data.shape}, 数据类型: {data.dtype}")
+        return data
     except Exception as e:
         logger.error(f"读取文件 {file_path} 时出错: {e}")
         raise
 
-def filter_mito_by_mask_id(mask_data, mito_data, valid_mask_ids, output_path=None):
+def filter_mito_by_mask_id(mask_data, mito_data, valid_mask_ids, 
+                          output_mito_included=None, output_mito_excluded=None,
+                          output_mask_included=None, output_mask_excluded=None):
     """
     根据有效的mask id过滤mito数据
     
@@ -57,10 +48,13 @@ def filter_mito_by_mask_id(mask_data, mito_data, valid_mask_ids, output_path=Non
         mask_data: mask数据数组
         mito_data: mito数据数组
         valid_mask_ids: 有效的mask id列表
-        output_path: 输出文件路径，如果为None则不保存
+        output_mito_included: 输出包含指定id区域的mito文件路径，如果为None则不保存
+        output_mito_excluded: 输出不包含指定id区域的mito文件路径，如果为None则不保存
+        output_mask_included: 输出包含指定id的mask文件路径，如果为None则不保存
+        output_mask_excluded: 输出不包含指定id的mask文件路径，如果为None则不保存
     
     Returns:
-        过滤后的mito数据
+        包含指定id的mito数据, 不包含指定id的mito数据
     """
     logger.info(f"开始过滤mito数据...")
     logger.info(f"原始mask数据形状: {mask_data.shape}")
@@ -71,43 +65,92 @@ def filter_mito_by_mask_id(mask_data, mito_data, valid_mask_ids, output_path=Non
     valid_mask_mask = np.isin(mask_data, valid_mask_ids)
     logger.info(f"有效mask像素数量: {np.sum(valid_mask_mask)}")
     
-    # 过滤mito数据：只保留在有效mask区域内的mito
-    filtered_mito = mito_data.copy()
-    filtered_mito[~valid_mask_mask] = 0
+    # 生成两个mask
+    # 1. 包含指定id的mask
+    mask_included = mask_data.copy()
+    mask_included[~valid_mask_mask] = 0
+    
+    # 2. 不包含指定id的mask（其余部分）
+    mask_excluded = mask_data.copy()
+    mask_excluded[valid_mask_mask] = 0
+    
+    # 生成两个mito数据
+    # 1. 包含指定id区域的mito
+    mito_included = mito_data.copy()
+    mito_included[~valid_mask_mask] = 0
+    
+    # 2. 不包含指定id区域的mito（其余部分）
+    mito_excluded = mito_data.copy()
+    mito_excluded[valid_mask_mask] = 0
     
     # 统计过滤结果
     original_mito_count = np.sum(mito_data > 0)
-    filtered_mito_count = np.sum(filtered_mito > 0)
+    mito_included_count = np.sum(mito_included > 0)
+    mito_excluded_count = np.sum(mito_excluded > 0)
     logger.info(f"原始mito像素数量: {original_mito_count}")
-    logger.info(f"过滤后mito像素数量: {filtered_mito_count}")
-    logger.info(f"过滤掉的mito像素数量: {original_mito_count - filtered_mito_count}")
+    logger.info(f"包含区域的mito像素数量: {mito_included_count}")
+    logger.info(f"排除区域的mito像素数量: {mito_excluded_count}")
     
-    # 如果指定了输出路径，保存过滤后的数据
-    if output_path:
+    # 统计mask信息
+    unique_ids_included = np.unique(mask_included[mask_included > 0])
+    unique_ids_excluded = np.unique(mask_excluded[mask_excluded > 0])
+    logger.info(f"包含的mask中的唯一id数量: {len(unique_ids_included)}")
+    logger.info(f"排除的mask中的唯一id数量: {len(unique_ids_excluded)}")
+    
+    # 保存包含指定id区域的mito
+    if output_mito_included:
         try:
-            with h5py.File(output_path, 'w') as f:
-                f.create_dataset('data', data=filtered_mito, compression='gzip')
-            logger.info(f"过滤后的数据已保存到: {output_path}")
+            tifffile.imwrite(output_mito_included, mito_included, compression='zlib')
+            logger.info(f"包含区域的mito数据已保存到: {output_mito_included}")
         except Exception as e:
-            logger.error(f"保存文件时出错: {e}")
+            logger.error(f"保存included mito文件时出错: {e}")
             raise
     
-    return filtered_mito
+    # 保存不包含指定id区域的mito
+    if output_mito_excluded:
+        try:
+            tifffile.imwrite(output_mito_excluded, mito_excluded, compression='zlib')
+            logger.info(f"排除区域的mito数据已保存到: {output_mito_excluded}")
+        except Exception as e:
+            logger.error(f"保存excluded mito文件时出错: {e}")
+            raise
+    
+    # 保存包含指定id的mask
+    if output_mask_included:
+        try:
+            tifffile.imwrite(output_mask_included, mask_included, compression='zlib')
+            logger.info(f"包含指定id的mask已保存到: {output_mask_included}")
+        except Exception as e:
+            logger.error(f"保存included mask文件时出错: {e}")
+            raise
+    
+    # 保存不包含指定id的mask
+    if output_mask_excluded:
+        try:
+            tifffile.imwrite(output_mask_excluded, mask_excluded, compression='zlib')
+            logger.info(f"不包含指定id的mask已保存到: {output_mask_excluded}")
+        except Exception as e:
+            logger.error(f"保存excluded mask文件时出错: {e}")
+            raise
+    
+    return mito_included, mito_excluded
 
 def main():
-    parser = argparse.ArgumentParser(description="根据指定的mask id过滤mito数据")
+    parser = argparse.ArgumentParser(description="根据指定的mask id过滤mito数据并生成included和excluded的mito和mask")
     parser.add_argument("--mask_file", type=str, required=True, 
-                       help="mask h5文件路径 (mitoEM-H_den_mask.h5)")
+                       help="mask tiff文件路径")
     parser.add_argument("--mito_file", type=str, required=True, 
-                       help="mito h5文件路径 (mitoEM-H_den_mito.h5)")
+                       help="mito tiff文件路径")
     parser.add_argument("--mask_ids", type=int, nargs='+', required=True,
                        help="有效的mask id列表，例如: 1 2 3 4")
-    parser.add_argument("--output", type=str, default=None,
-                       help="输出文件路径，如果不指定则不保存")
-    parser.add_argument("--mask_dataset", type=str, default=None,
-                       help="mask文件中的数据集键名")
-    parser.add_argument("--mito_dataset", type=str, default=None,
-                       help="mito文件中的数据集键名")
+    parser.add_argument("--output_mito_included", type=str, default=None,
+                       help="输出包含指定id区域的mito文件路径，如果不指定则不保存")
+    parser.add_argument("--output_mito_excluded", type=str, default=None,
+                       help="输出不包含指定id区域的mito文件路径，如果不指定则不保存")
+    parser.add_argument("--output_mask_included", type=str, default=None,
+                       help="输出包含指定id的mask文件路径，如果不指定则不保存")
+    parser.add_argument("--output_mask_excluded", type=str, default=None,
+                       help="输出不包含指定id的mask文件路径，如果不指定则不保存")
     
     args = parser.parse_args()
     
@@ -123,19 +166,23 @@ def main():
     try:
         # 读取数据
         logger.info("正在读取mask文件...")
-        mask_data = read_h5_file(args.mask_file, args.mask_dataset)
+        mask_data = read_tiff_file(args.mask_file)
         
         logger.info("正在读取mito文件...")
-        mito_data = read_h5_file(args.mito_file, args.mito_dataset)
+        mito_data = read_tiff_file(args.mito_file)
         
         # 检查数据形状是否匹配
         if mask_data.shape != mito_data.shape:
             logger.error(f"数据形状不匹配: mask={mask_data.shape}, mito={mito_data.shape}")
             return
         
-        # 过滤数据
-        filtered_mito = filter_mito_by_mask_id(
-            mask_data, mito_data, args.mask_ids, args.output
+        # 过滤数据并生成mito和mask
+        mito_included, mito_excluded = filter_mito_by_mask_id(
+            mask_data, mito_data, args.mask_ids, 
+            output_mito_included=args.output_mito_included,
+            output_mito_excluded=args.output_mito_excluded,
+            output_mask_included=args.output_mask_included,
+            output_mask_excluded=args.output_mask_excluded
         )
         
         logger.info("过滤完成！")

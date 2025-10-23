@@ -29,6 +29,8 @@ def main():
     parser.add_argument("--min_extent", type=int, default=5, help="Minimum bounding box extent for objects.")
     parser.add_argument("--pixel_vote_thr", type=int, default=2, help="Voxel vote threshold for ortho-plane consensus.")
     parser.add_argument("--use_gpu", action="store_true", help="Use GPU for inference if available.")
+    parser.add_argument("--axes", type=str, nargs='+', default=['xy', 'xz', 'yz'], 
+                        choices=['xy', 'xz', 'yz'], help="Axes to perform inference on. Default: xy xz yz")
     args = parser.parse_args()
 
     # 检查输入是文件还是目录
@@ -73,6 +75,8 @@ def main():
     # 存储所有输出的consensus文件路径用于评估
     consensus_output_files = []
     
+    print(f"\nUsing axes for inference: {', '.join(args.axes)}")
+    
     # 处理每个输入文件
     for input_file in input_files:
         print(f"\n{'='*60}")
@@ -98,7 +102,7 @@ def main():
         # 获取需要调用的原始生成器函数
         stack_postprocessing_generator = stack_postprocessing.__wrapped__
         
-        for axis_name in ['xy', 'xz', 'yz']:
+        for axis_name in args.axes:
             print(f"Running inference on {axis_name} plane...")
             _, trackers = engine.infer_on_axis(image, axis_name)
             trackers_dict[axis_name] = trackers
@@ -120,7 +124,7 @@ def main():
                     plane_segmentation = seg_vol
             
             if plane_segmentation is not None:
-                output_path = os.path.join(args.output, f"{base_filename}_{axis_name}.tif")
+                output_path = os.path.join(args.output, f"{base_filename}_{axis_name}.tiff")
                 print(f"  Saving {axis_name} segmentation to {output_path}...")
                 tifffile.imwrite(output_path, plane_segmentation.astype(np.uint16), compression='zlib')
             else:
@@ -146,7 +150,7 @@ def main():
                 final_segmentation = consensus_vol
 
         if final_segmentation is not None:
-            output_path = os.path.join(args.output, f"{base_filename}_consensus.tif")
+            output_path = os.path.join(args.output, f"{base_filename}.tiff").replace("_0000", "")
             print(f"Saving final consensus segmentation to {output_path}...")
             tifffile.imwrite(output_path, final_segmentation.astype(np.uint16), compression='zlib')
             consensus_output_files.append(output_path)

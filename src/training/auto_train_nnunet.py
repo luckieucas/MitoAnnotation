@@ -69,6 +69,7 @@ class AutoTrainNnunet:
         self.instances_dir = self.dataset_dir / "instancesTr"
         self.images_ts_dir = self.dataset_dir / "imagesTs"
         self.instances_ts_dir = self.dataset_dir / "instancesTs"
+        self.masks_ts_dir = self.dataset_dir / "masksTs"
         self.images_ts_pred_dir = self.dataset_dir / "imagesTs_pred"
         self.final_results_dir = self.dataset_dir / "imagesTs_pred_waterz"
         
@@ -473,6 +474,15 @@ class AutoTrainNnunet:
                         "--pred_file", str(pred_file),
                         "--gt_file", str(gt_file)
                     ]
+                    
+                    # 检查是否存在对应的mask文件
+                    if self.masks_ts_dir.exists():
+                        mask_file = self.masks_ts_dir / f"{base_name}.tiff"
+                        if mask_file.exists():
+                            cmd.extend(["--mask_file", str(mask_file)])
+                            logger.info(f"使用mask文件: {mask_file.name}")
+                        else:
+                            logger.debug(f"未找到mask文件: {mask_file}")
                     
                     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                     logger.info(f"评估完成: {pred_file.name}")

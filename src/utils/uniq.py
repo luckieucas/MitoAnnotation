@@ -1,3 +1,5 @@
+import argparse
+import tifffile as tiff
 import numpy as np
 def unique_uint_bitmap(memmap_or_ndarray):
     a = memmap_or_ndarray
@@ -15,3 +17,11 @@ def unique_uint_bitmap(memmap_or_ndarray):
     for i in range(0, flat.size, step):
         presence[flat[i:i+step]] = True
     return np.flatnonzero(presence)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", type=str, required=True)
+    args = parser.parse_args()
+    mask = tiff.imread(args.input)
+    print(unique_uint_bitmap(mask))

@@ -6,6 +6,7 @@ EFI fragment threshold is now 5% of the instance's volume.
 MCI, MBI, surface area, and skeleton-related metrics have been removed.
 Added Normalized Contact Count.
 MODIFIED: Added timing for performance analysis.
+FIXED: Handle disk space issues by using temp_folder and max_nbytes.
 """
 
 import os
@@ -15,8 +16,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from joblib import Parallel, delayed
-import time # MODIFIED: Import time module
-
+import time
+import tempfile
 
 from skimage import measure
 from skimage.morphology import remove_small_objects
@@ -33,7 +34,6 @@ def process_single_mito(local_neighborhood_mask, center_label_id, compute_contac
     EFI threshold is now dynamic (5% of volume).
     REMOVED: DCI, MCI, MBI, surface area, and skeleton metrics are no longer calculated.
     """
-    # MODIFIED: Start total timer for the function
     t_start_total = time.perf_counter()
 
     this_mask_in_neighborhood = (local_neighborhood_mask == center_label_id)
@@ -66,7 +66,7 @@ def process_single_mito(local_neighborhood_mask, center_label_id, compute_contac
     
     # --- Dilation-based Metrics with Normalized Contact Count ---
     contact_count = np.nan
-    time_dilation_ms = 0 # Initialize timer value
+    time_dilation_ms = 0
     if compute_contact_count:
         t_start_dilation = time.perf_counter()
         dilated = binary_dilation(this_mask_in_neighborhood, structure=structure)
@@ -81,7 +81,6 @@ def process_single_mito(local_neighborhood_mask, center_label_id, compute_contac
     t_end_total = time.perf_counter()
     time_total_ms = (t_end_total - t_start_total) * 1000
 
-    # MODIFIED: Added timing results to the dictionary
     results = {
         "mito_id": int(center_label_id),
         "volume_voxels3": volume,
@@ -100,8 +99,7 @@ def process_single_mito(local_neighborhood_mask, center_label_id, compute_contac
             
     return results
 
-def analyze_mito_mask_fast(mask_3d, compute_contact_count=False):
-    # MODIFIED: Start timer for the entire analysis of one file
+def analyze_mito_mask_fast(mask_3d, compute_contact_count=False, temp_folder=None):
     t_start_analysis = time.perf_counter()
 
     if np.max(mask_3d) == 1: mask_3d, _ = label(mask_3d)
@@ -117,8 +115,12 @@ def analyze_mito_mask_fast(mask_3d, compute_contact_count=False):
         else:
             fake_local_patch = prop.image.astype(np.uint8) * prop.label
             tasks.append(delayed(process_single_mito)(fake_local_patch, prop.label, compute_contact_count=False))
-            
-    intra_results = Parallel(n_jobs=-1)(tasks)
+    
+    # FIXED: Use threading backend to avoid disk space issues with process serialization
+    # Threading is safer for large arrays and doesn't require disk serialization
+    print(f"    Processing {len(tasks)} mitochondria using threading backend...")
+    intra_results = Parallel(n_jobs=-1, backend='threading')(tasks)
+    
     results_map = {r['mito_id']: r for r in intra_results if r is not None}
     if len(props) > 1:
         labels_arr = np.array([p.label for p in props])
@@ -131,7 +133,6 @@ def analyze_mito_mask_fast(mask_3d, compute_contact_count=False):
     else:
         for label_id in results_map: results_map[label_id]['nnd_voxels'] = np.nan
 
-    # MODIFIED: Print total analysis time for the file
     t_end_analysis = time.perf_counter()
     print(f"    File analysis complete in {t_end_analysis - t_start_analysis:.2f} seconds.")
 
@@ -145,29 +146,41 @@ def process_folder(folder_path, output_dir, compute_contact_count=False):
     per_file_summary_path = os.path.join(output_dir, f"{base_name}_summary_per_file.csv")
     folder_summary_path = os.path.join(output_dir, f"{base_name}_summary_folder.csv")
     all_results_list, per_file_summary_list = [], []
-    file_list = [f for f in os.listdir(folder_path) if f.endswith("_mito.h5") and "crop" not in f]
+    file_list = [f for f in os.listdir(folder_path) if f.endswith("_mito.h5") and "_crop" not in f]
     if not file_list: return None
-    for filename in tqdm(file_list, desc=f"Processing {base_name}", leave=False):
-        # MODIFIED: Start timer for processing one file
-        printr = f"Processing file: {filename}"
-        t_start_file = time.perf_counter()
+    
+    # Create a temp folder in a location with more space (if needed)
+    temp_folder = tempfile.mkdtemp(dir=output_dir, prefix='joblib_tmp_')
+    print(f"Using temporary folder: {temp_folder}")
+    
+    try:
+        for filename in tqdm(file_list, desc=f"Processing {base_name}", leave=False):
+            print(f"Processing file: {filename}")
+            t_start_file = time.perf_counter()
 
-        filepath = os.path.join(folder_path, filename)
-        with h5py.File(filepath, 'r') as f: mask = f[list(f.keys())[0]][()]
-        mito_results = analyze_mito_mask_fast(mask, compute_contact_count=compute_contact_count)
-        if mito_results:
-            df_file = pd.DataFrame(mito_results)
-            file_avg = df_file.drop(columns=['mito_id']).mean(numeric_only=True).to_dict()
-            file_avg['mito_count'] = len(df_file)
-            file_avg['source_file'] = filename
-            per_file_summary_list.append(file_avg)
-            for r in mito_results:
-                r["file"] = filename
-                all_results_list.append(r)
-        
-        # MODIFIED: Print total time for the file
-        t_end_file = time.perf_counter()
-        print(f"  > Finished processing file '{filename}' in {t_end_file - t_start_file:.2f} seconds.")
+            filepath = os.path.join(folder_path, filename)
+            with h5py.File(filepath, 'r') as f: mask = f[list(f.keys())[0]][()]
+            print(f"Mask shape: {mask.shape}")
+            mito_results = analyze_mito_mask_fast(mask, compute_contact_count=compute_contact_count, 
+                                                 temp_folder=temp_folder)
+            if mito_results:
+                df_file = pd.DataFrame(mito_results)
+                file_avg = df_file.drop(columns=['mito_id']).mean(numeric_only=True).to_dict()
+                file_avg['mito_count'] = len(df_file)
+                file_avg['source_file'] = filename
+                per_file_summary_list.append(file_avg)
+                for r in mito_results:
+                    r["file"] = filename
+                    all_results_list.append(r)
+            
+            t_end_file = time.perf_counter()
+            print(f"  > Finished processing file '{filename}' in {t_end_file - t_start_file:.2f} seconds.")
+    finally:
+        # Clean up temp folder
+        import shutil
+        if os.path.exists(temp_folder):
+            shutil.rmtree(temp_folder)
+            print(f"Cleaned up temporary folder: {temp_folder}")
 
     if not all_results_list: return None
     df_detailed = pd.DataFrame(all_results_list)
@@ -176,7 +189,6 @@ def process_folder(folder_path, output_dir, compute_contact_count=False):
     if per_file_summary_list:
         df_per_file = pd.DataFrame(per_file_summary_list)
         df_per_file = df_per_file.round(4)
-        # MODIFIED: Remove timing columns from per-file summary view
         time_cols = [c for c in df_per_file.columns if c.startswith('time_')]
         main_cols = [c for c in df_per_file.columns if c not in ['source_file', 'mito_count'] + time_cols]
         cols = ['source_file', 'mito_count']  + main_cols
@@ -184,7 +196,6 @@ def process_folder(folder_path, output_dir, compute_contact_count=False):
         df_per_file.to_csv(per_file_summary_path, index=False)
         print(f"-> Saved per-file summary to: {per_file_summary_path}")
     
-    # MODIFIED: Exclude timing columns from final folder average
     folder_avg_df = pd.DataFrame(per_file_summary_list)
     time_cols_to_drop = [c for c in folder_avg_df.columns if c.startswith('time_')]
     folder_avg_series = folder_avg_df.drop(columns=['source_file'] + time_cols_to_drop).mean(numeric_only=True)
@@ -195,8 +206,6 @@ def process_folder(folder_path, output_dir, compute_contact_count=False):
     df_folder_avg = df_folder_avg[cols]
     df_folder_avg.to_csv(folder_summary_path, index=False)
     return folder_avg_series
-
-
 
 
 def parse_args():
@@ -228,6 +237,14 @@ def main():
         print("Dilation-based Contact Count metric is ENABLED.")
     print("EFI fragment threshold is dynamic: 5% of instance volume.")
     print(f"Results will be saved to: {output_dir}"); print("-" * 30)
+    
+    # Check disk space
+    import shutil
+    total, used, free = shutil.disk_usage(output_dir)
+    print(f"Disk space in output directory: {free // (2**30)} GB free out of {total // (2**30)} GB total")
+    if free < 10 * (2**30):  # Less than 10GB
+        print("WARNING: Low disk space detected! Consider freeing up space or using a different output directory.")
+    
     try: all_subfolders = {entry.name: entry.path for entry in os.scandir(root_folder) if entry.is_dir()}
     except FileNotFoundError: print(f"Error: Root folder not found at {root_folder}"); return
     folders_to_process, specified_datasets = [], datasets_hard + datasets_easy
@@ -247,6 +264,8 @@ def main():
                 all_folder_summaries.append(folder_summary)
         except Exception as e:
             print(f"!!! An error occurred while processing {subfolder_path}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
     print("\n" + "=" * 30); print("All processing complete.")
     if not all_folder_summaries: print("No data was generated, skipping plots."); return
@@ -260,7 +279,6 @@ def main():
     print("\nGenerating summary scatter plot...")
     if args.compute_contact_count:
         try:
-            # Save scatter plot data to CSV for Excel plotting
             scatter_data = summary_df[['dataset', 'group', 'contact_count', 'efi']].copy()
             scatter_csv_filename = f"{os.path.basename(os.path.normpath(root_folder))}_efi_vs_contact_count_data.csv"
             scatter_csv_filepath = os.path.join(output_dir, scatter_csv_filename)
@@ -301,7 +319,6 @@ def main():
     print("\nGenerating bar charts for each metric...")
     bar_plot_dir = os.path.join(output_dir, "metric_comparison_charts")
     os.makedirs(bar_plot_dir, exist_ok=True)
-    # MODIFIED: Exclude timing columns from bar plots
     metric_columns = summary_df.select_dtypes(include=np.number).columns.tolist()
     metric_columns = [m for m in metric_columns if not m.startswith('time_')]
 

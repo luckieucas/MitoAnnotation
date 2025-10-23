@@ -2,6 +2,16 @@
 
 This is a comprehensive toolkit for mitochondria segmentation, annotation, and analysis, including data processing, model training, prediction, post-processing, and evaluation functionalities.
 
+---
+
+## 🆕 **NEW: Train MitoNet with nnUNet Datasets!**
+
+**👉 [START HERE](START_HERE.md) for quick setup and training with nnUNet format datasets!**
+
+We now support automatic conversion of 3D nnUNet datasets to 2D slices and streamlined MitoNet training. Get started in minutes!
+
+---
+
 ## Project Structure
 
 ```
@@ -21,7 +31,10 @@ MitoAnnotation/
 │   ├── training/                 # Training related
 │   │   ├── auto_train_nnunet.py
 │   │   ├── run_training_direct.py
-│   │   └── simple_training_example.py
+│   │   ├── simple_training_example.py
+│   │   ├── mitoNet_finetune.py
+│   │   ├── mitoNet_finetune_from_nnunet.py  # 🆕 nnUNet format training
+│   │   └── README_nnunet_finetune.md        # 🆕 Documentation
 │   │
 │   ├── postprocessing/           # Post-processing
 │   │   ├── bc_watershed.py
@@ -34,6 +47,7 @@ MitoAnnotation/
 │   ├── evaluation/               # Evaluation and analysis
 │   │   ├── evaluate_res.py
 │   │   ├── evaluate_dataset_difficult.py
+│   │   ├── evaluate_mitonet.py            # 🆕 MitoNet evaluation
 │   │   ├── error_analysis.py
 │   │   ├── fp_fn_analysis.py
 │   │   └── fp_fn_3d_analysis.py
@@ -59,6 +73,9 @@ MitoAnnotation/
 │
 ├── scripts/                      # Script files
 │   ├── README_SLURM.md
+│   ├── test_data_conversion.py         # 🆕 Test nnUNet conversion
+│   ├── run_cardiac_training.sh         # 🆕 Single dataset training
+│   ├── run_all_datasets.sh             # 🆕 Batch processing
 │   ├── submit_auto_training.sl
 │   ├── submit_evaluate_res.sl
 │   ├── submit_mitonet_zs-baseline.sl
@@ -82,8 +99,44 @@ MitoAnnotation/
 ├── logs/                         # Log files
 ├── figs/                         # Image outputs
 ├── requirements.txt
-└── README.md
+├── README.md
+├── QUICK_START_NNUNET.md         # 🆕 Quick start for nnUNet
+└── CHANGES_SUMMARY.md            # 🆕 Summary of new features
 ```
+
+## 🆕 New Feature: nnUNet Dataset Support
+
+**Easily train MitoNet with nnUNet format datasets!**
+
+We now provide complete support for training MitoNet models directly from nnUNet-formatted 3D datasets. The toolkit automatically converts 3D TIFF images to 2D slices and handles the entire training and evaluation pipeline.
+
+### Quick Start for nnUNet Datasets
+
+```bash
+# Train from nnUNet dataset (automatic 3D to 2D conversion)
+python src/training/mitoNet_finetune_from_nnunet.py \
+    /path/to/Dataset004_MitoHardCardiac \
+    ./trained_models/cardiac_mitonet \
+    --model_name MitoNet_Cardiac \
+    --iterations 1000
+
+# Or use the convenient script
+./scripts/run_cardiac_training.sh
+```
+
+📚 **Documentation:**
+- [Quick Start Guide](QUICK_START_NNUNET.md) - Get started in minutes
+- [Detailed Documentation](src/training/README_nnunet_finetune.md) - Complete reference
+- [Changes Summary](CHANGES_SUMMARY.md) - What's new
+
+### Key Features
+- ✅ Automatic 3D to 2D slice conversion
+- ✅ Compatible with nnUNet dataset format
+- ✅ Integrated training and evaluation pipeline
+- ✅ Batch processing for multiple datasets
+- ✅ Comprehensive metrics (IoU, Dice, F1, etc.)
+
+---
 
 ## Quick Start
 
@@ -129,13 +182,23 @@ python src/training/auto_train_nnunet.py \
     --dataset_id "Dataset001_MitoLE"
 ```
 
-**Use MitoNet**:
+**Finetune MitoNet**
+```bash
+
+```
+
+**Inference with MitoNet**:
 ```bash
 python src/models/mitoNet_baseline.py /path/to/nnUNet_raw \
     --datasets Dataset001 Dataset002 \
     --config_path configs/MitoNet_v1.yaml \
     --use_gpu \
     --evaluate
+```
+
+**Inference with MicroSAM**:
+```bash
+python src/inference/micro_sam_baseline.py -d /projects/weilab/liupeng/nnUNet/DATASET/nnUNet_raw/Dataset007_MitoHardKedarf536 --use_embeddings --eval
 ```
 
 #### 3. Post-processing

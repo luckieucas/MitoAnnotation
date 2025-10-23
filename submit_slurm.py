@@ -12,7 +12,8 @@ def create_slurm_script(
     cpus, 
     mem, 
     gpus, 
-    constraint
+    constraint,
+    env_name
 ):
     """根据传入的参数动态创建SLURM sbatch脚本内容"""
     
@@ -45,7 +46,7 @@ echo "SLURM_JOB_ID: $SLURM_JOB_ID"
 echo "Running command: {command}"
 echo "=========================================================="
 source ~/miniconda3/bin/activate
-conda activate mitohard
+conda activate {env_name}
 # 运行 脚本
 {command}
 
@@ -66,7 +67,8 @@ def submit_job(args):
         cpus=args.cpus,
         mem=args.mem,
         gpus=args.gpus,
-        constraint=args.constraint
+        constraint=args.constraint,
+        env_name=args.env_name
     )
     
     print("--- 将要提交的SLURM脚本 ---")
@@ -100,7 +102,7 @@ def main():
     )
     
     # --- 必选参数 ---
-    parser.add_argument('command', help='要运行的 python 命令 (例如: train_model)')
+    parser.add_argument('--command', help='要运行的 python 命令 (例如: train_model)')
     
     # --- 可选参数 (覆盖SLURM默认配置) ---
     parser.add_argument('--job_name', '-n', help='指定作业的名称 (默认会根据命令自动生成)')
@@ -110,10 +112,10 @@ def main():
     parser.add_argument('--mem', '-m', default='240G', help='请求的内存大小 (例如: 240G)')
     parser.add_argument('--gpus', '-g', type=int, default=1, help='请求的GPU数量')
     parser.add_argument('--constraint', default='vr40g|vr80g', help='GPU类型约束 (例如: "v100|a100")')
-    
+    parser.add_argument('--env_name', '-e', default='mitohard', help='指定要激活的conda环境')
     args = parser.parse_args()
     
-        
+
     submit_job(args)
 
 if __name__ == '__main__':

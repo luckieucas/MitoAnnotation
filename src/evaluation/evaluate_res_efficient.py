@@ -1,4 +1,3 @@
-
 import argparse
 import tifffile
 import numpy as np
@@ -9,6 +8,7 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from skimage.segmentation import relabel_sequential
+from skimage.metrics import contingency_table # <--- 方案一：添加导入
 from connectomics.utils.evaluate import _check_label_array,_raise,matching_criteria,label_overlap
 
 
@@ -59,17 +59,71 @@ def instance_matching(y_true, y_pred, thresh=0.5, criterion='iou', report_matche
         thresh = 0
     thresh = float(thresh) if np.isscalar(thresh) else map(float, thresh)
 
-    y_true, _, map_rev_true = relabel_sequential(y_true)
-    y_pred, _, map_rev_pred = relabel_sequential(y_pred)
-    map_rev_true = np.array(map_rev_true)
-    map_rev_pred = np.array(map_rev_pred)
+    # ------------------- 方案一：优化开始 -------------------
+    # 移除创建巨大副本的 relabel_sequential
+    # y_true, _, map_rev_true = relabel_sequential(y_true)
+    # y_pred, _, map_rev_pred = relabel_sequential(y_pred)
+    # map_rev_true = np.array(map_rev_true)
+    # map_rev_pred = np.array(map_rev_pred)
+    # overlap = label_overlap(y_true, y_pred, check=False)
+    
+    # 使用 contingency_table 高效计算稀疏重叠矩阵
+    # 这会返回重叠矩阵以及对应的唯一标签
+    print("Calculating contingency table...")
+    result = contingency_table(y_true.ravel(), y_pred.ravel())
+    
+    # contingency_table 可能返回稀疏矩阵或密集矩阵
+    # 检查返回值类型并相应处理
+    # 使用 isinstance 检查是否为 tuple，避免对稀疏矩阵调用 len()
+    if isinstance(result, tuple):
+        # 返回 (overlap, true_labels, pred_labels)
+        overlap_matrix, true_unique_labels, pred_unique_labels = result
+        if hasattr(overlap_matrix, 'toarray'):
+            # 如果是稀疏矩阵，转换为密集矩阵
+            overlap = overlap_matrix.toarray()
+        else:
+            overlap = overlap_matrix
+        map_rev_true = np.array(true_unique_labels)
+        map_rev_pred = np.array(pred_unique_labels)
+    else:
+        # 返回单个矩阵
+        if hasattr(result, 'toarray'):
+            overlap = result.toarray()
+        else:
+            overlap = result
+        # 需要手动获取唯一标签
+        map_rev_true = np.unique(y_true)
+        map_rev_pred = np.unique(y_pred)
+    
+    print("Contingency table calculation complete.")
+    # ------------------- 方案一：优化结束 -------------------
 
-    overlap = label_overlap(y_true, y_pred, check=False)
     scores = matching_criteria[criterion](overlap)
     assert 0 <= np.min(scores) <= np.max(scores) <= 1
 
-    # Ignoring background
-    scores = scores[1:, 1:]
+    # ------------------- 方案一：优化开始 (背景移除) -------------------
+    # 移除背景 (label 0)
+    # 原始代码假设背景在 index 0，但 contingency_table 不保证这一点
+    
+    # 找到 '0' 标签在唯一标签列表中的索引
+    true_bg_idx = np.where(map_rev_true == 0)[0]
+    pred_bg_idx = np.where(map_rev_pred == 0)[0]
+
+    # 从 scores 矩阵中删除背景行和列
+    if true_bg_idx.size > 0:
+        # print(f"Removing true background at index: {true_bg_idx[0]}")
+        scores = np.delete(scores, true_bg_idx[0], axis=0)
+        map_rev_true = np.delete(map_rev_true, true_bg_idx[0]) # 保持 map_rev 同步
+        
+    if pred_bg_idx.size > 0:
+        # print(f"Removing pred background at index: {pred_bg_idx[0]}")
+        scores = np.delete(scores, pred_bg_idx[0], axis=1)
+        map_rev_pred = np.delete(map_rev_pred, pred_bg_idx[0]) # 保持 map_rev 同步
+
+    # 移除原始的背景切片
+    # scores = scores[1:, 1:] 
+    # ------------------- 方案一：优化结束 (背景移除) -------------------
+
     n_true, n_pred = scores.shape
     n_matched = min(n_true, n_pred)
 
@@ -105,7 +159,10 @@ def instance_matching(y_true, y_pred, thresh=0.5, criterion='iou', report_matche
         # matched_scores = [scores[i, j] for i, j in matched_pairs]
         matched_pairs = [(i+1, np.argmax(scores[i])+1) for i in range(n_true)]
         matched_scores = [scores[i-1, j-1] for i, j in matched_pairs]
-        matched_pairs = [(map_rev_true[i], map_rev_pred[j]) for i, j in matched_pairs]
+        # ------------------- 方案一：优化开始 (匹配对) -------------------
+        # 确保使用正确的标签（来自 map_rev）而不是顺序索引
+        matched_pairs = [(map_rev_true[i-1], map_rev_pred[j-1]) for i, j in matched_pairs]
+        # ------------------- 方案一：优化结束 (匹配对) -------------------
         result.update({
             'matched_pairs': matched_pairs,
             'matched_scores': matched_scores,
@@ -135,23 +192,26 @@ def evaluate_single_file(pred_file, gt_file, save_results=True, mask_file=None):
     """
     try:
         # Load images
+        print(f"Loading ground truth: {gt_file}")
         if isinstance(gt_file, str):
             y_true = tifffile.imread(gt_file)
         else:
             y_true = gt_file
-            
+        print(f"Loading prediction: {pred_file}")
         if isinstance(pred_file, str):
             y_pred = tifffile.imread(pred_file)
         else:
             y_pred = pred_file
+        print("Loading complete.")
             
         # Apply mask if provided
         if mask_file is not None:
+            print(f"Loading mask: {mask_file}")
             if isinstance(mask_file, str):
                 mask = tifffile.imread(mask_file)
             else:
                 mask = mask_file
-            
+            print("Applying mask...")
             # Check if mask shape matches
             if mask.shape != y_pred.shape:
                 raise ValueError(f"Mask shape {mask.shape} does not match prediction shape {y_pred.shape}")
@@ -160,17 +220,22 @@ def evaluate_single_file(pred_file, gt_file, save_results=True, mask_file=None):
             mask_bool = mask > 0
             y_pred = y_pred * mask_bool
             y_true = y_true * mask_bool
+            print("Mask application complete.")
             
         # Calculate instance matching metrics
+        print("Starting instance matching...")
         metrics = instance_matching(y_true, y_pred, report_matches=True, thresh=0.5)
+        print("Instance matching complete.")
         
         # Calculate binary recall and precision
+        print("Calculating binary metrics...")
         binary_recall, binary_precision, binary_f1 = compute_precision_recall_f1(
             y_pred>0, y_true>0
         )
         metrics["binary_recall"] = binary_recall
         metrics["binary_precision"] = binary_precision
         metrics["binary_f1"] = binary_f1
+        print("Binary metrics complete.")
         
         # Add file information
         metrics["pred_file"] = pred_file
@@ -302,6 +367,8 @@ def evaluate_directory(pred_dir, gt_dir, save_results=True, max_workers=None, ma
     # Set up parallel processing
     if max_workers is None:
         max_workers = min(cpu_count(), len(file_pairs))
+    else:
+        max_workers = min(max_workers, len(file_pairs))
     
     results = []
     failed_files = []
@@ -480,11 +547,14 @@ if __name__ == '__main__':
                                             mask_file=args.mask_file)
         
         print("\nOverall Summary:")
-        for key, value in summary.items():
-            if key.endswith('_mean'):
-                print(f"{key}: {value:.4f}")
-            else:
-                print(f"{key}: {value}")
+        if summary: # 检查 summary 是否为空
+            for key, value in summary.items():
+                if key.endswith('_mean'):
+                    print(f"{key}: {value:.4f}")
+                else:
+                    print(f"{key}: {value}")
+        else:
+            print("Summary is empty.")
     else:
         # Single file evaluation
         metrics = evaluate_res(pred_file=args.pred_file, gt_file=args.gt_file, 
