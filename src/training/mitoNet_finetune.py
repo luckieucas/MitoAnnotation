@@ -2,6 +2,7 @@ import os
 import argparse
 import platform
 import torch
+import SimpleITK as sitk
 import tifffile as tiff
 import numpy as np
 import sys
@@ -9,6 +10,9 @@ import pandas as pd
 from glob import glob
 from pathlib import Path
 from tqdm import tqdm
+
+
+sys.path.append('/projects/weilab/liupeng/MitoAnnotation/src')
 from empanada.config_loaders import load_config, read_yaml
 from empanada_napari.utils import add_new_model
 from empanada_napari.inference import Engine3d, tracker_consensus, stack_postprocessing
@@ -16,8 +20,11 @@ from empanada_napari.inference import Engine3d, tracker_consensus, stack_postpro
 # 导入核心训练逻辑
 from empanada_napari import finetune as finetune_logic
 
+# Import nnUNet path utilities
+from nnunetv2.paths import nnUNet_raw
+from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
+
 # 导入评估模块
-sys.path.append('/projects/weilab/liupeng/MitoAnnotation/src')
 from evaluation.evaluate_res import evaluate_res
 
 def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
@@ -35,15 +42,16 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
     imagesTr_path = os.path.join(nnunet_dataset_path, 'imagesTr')
     labelsTr_path = os.path.join(nnunet_dataset_path, 'instancesTr')
 
-    train_images = sorted(glob(os.path.join(imagesTr_path, '*.tif*')))
-    train_labels = sorted(glob(os.path.join(labelsTr_path, '*.tif*')))
+    train_images = sorted(glob(os.path.join(imagesTr_path, '*.nii.gz')))
+    train_labels = sorted(glob(os.path.join(labelsTr_path, '*.nii.gz')))
     
     print(f"Found {len(train_images)} training images and {len(train_labels)} training labels")
     
     for img_path in train_images:
         # 读取3D图像
-        img_3d = tiff.imread(img_path)
-        base_name = os.path.basename(img_path).replace('_0000', '').replace('.tiff', '').replace('.tif', '')
+        img_sitk = sitk.ReadImage(img_path)
+        img_3d = sitk.GetArrayFromImage(img_sitk)
+        base_name = os.path.basename(img_path).replace('_0000', '').replace('.nii.gz', '').replace('.tiff', '')
         
         # 找到对应的标签文件
         label_path = None
@@ -56,7 +64,8 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
             print(f"Warning: No label found for {base_name}, skipping...")
             continue
         
-        label_3d = tiff.imread(label_path)
+        label_sitk = sitk.ReadImage(label_path)
+        label_3d = sitk.GetArrayFromImage(label_sitk)
         
         # 确保图像和标签的形状匹配
         if img_3d.shape != label_3d.shape:
@@ -98,8 +107,7 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
             tiff.imwrite(os.path.join(volume_images_dir, slice_name), img_slice, compression='zlib')
             
             # 保存标签切片
-            # 确保标签是int32类型（empanada期望的类型
-            label_slice = label_slice.astype(np.uint16)
+            # 确保标签是int32类型（empanada期望的类型）
             tiff.imwrite(os.path.join(volume_masks_dir, slice_name), label_slice, compression='zlib')
             
             saved_slices += 1
@@ -111,15 +119,16 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
     imagesTs_path = os.path.join(nnunet_dataset_path, 'imagesTs')
     instancesTs_path = os.path.join(nnunet_dataset_path, 'instancesTs')
     
-    test_images = sorted(glob(os.path.join(imagesTs_path, '*.tif*')))
-    test_labels = sorted(glob(os.path.join(instancesTs_path, '*.tif*')))
+    test_images = sorted(glob(os.path.join(imagesTs_path, '*.nii.gz')))
+    test_labels = sorted(glob(os.path.join(instancesTs_path, '*.nii.gz')))
     
     print(f"Found {len(test_images)} test images and {len(test_labels)} test labels")
     
     for img_path in test_images:
         # 读取3D图像
-        img_3d = tiff.imread(img_path)
-        base_name = os.path.basename(img_path).replace('_0000', '').replace('.tiff', '').replace('.tif', '')
+        img_sitk = sitk.ReadImage(img_path)
+        img_3d = sitk.GetArrayFromImage(img_sitk)
+        base_name = os.path.basename(img_path).replace('_0000', '').replace('.nii.gz', '').replace('.tiff', '').replace('.tif', '')
         
         # 找到对应的标签文件
         label_path = None
@@ -132,7 +141,8 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
             print(f"Warning: No label found for {base_name}, skipping...")
             continue
         
-        label_3d = tiff.imread(label_path)
+        label_sitk = sitk.ReadImage(label_path)
+        label_3d = sitk.GetArrayFromImage(label_sitk)
         
         # 确保图像和标签的形状匹配
         if img_3d.shape != label_3d.shape:
@@ -175,8 +185,7 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
             
             # 保存标签切片
             # 确保标签是int32类型（empanada期望的类型）
-            if label_slice.dtype == np.uint16:
-                label_slice = label_slice.astype(np.int32)
+            label_slice = label_slice.astype(np.int32)
             tiff.imwrite(os.path.join(volume_labels_dir, slice_name), label_slice, compression='zlib')
             
             saved_slices += 1
@@ -192,28 +201,28 @@ def convert_3d_to_2d_slices(nnunet_dataset_path, output_path):
 
 def predict_3d(model_config_path, input_path, output_dir, args):
     """
-    使用训练好的模型对3D TIFF文件进行预测
+    使用训练好的模型对3D NII.GZ文件进行预测（仅在xy平面上）
     
     Args:
         model_config_path: 训练好的模型配置文件路径 (.yaml)
-        input_path: 输入3D TIFF文件或目录
+        input_path: 输入3D NII.GZ文件或目录
         output_dir: 输出目录
         args: 命令行参数
     """
     print(f"\n{'='*60}")
-    print("Starting 3D Prediction...")
+    print("Starting 3D Prediction on XY plane...")
     print(f"{'='*60}")
     
     # 检查输入是文件还是目录
     if os.path.isfile(input_path):
         input_files = [input_path]
     elif os.path.isdir(input_path):
-        # 查找所有tiff文件
+        # 查找所有nii.gz文件
         input_files = []
-        for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
+        for ext in ['*.nii.gz', '*.nii', '*.NII.GZ', '*.NII']:
             input_files.extend(glob(os.path.join(input_path, ext)))
         if not input_files:
-            raise ValueError(f"No TIFF files found in directory: {input_path}")
+            raise ValueError(f"No NII.GZ files found in directory: {input_path}")
     else:
         raise ValueError(f"Input path does not exist: {input_path}")
     
@@ -247,7 +256,10 @@ def predict_3d(model_config_path, input_path, output_dir, args):
         use_gpu=use_gpu_flag,
     )
     
-    print(f"\nUsing axes for inference: {', '.join(args.axes)}")
+    print("\nPerforming inference on XY plane only")
+    
+    # 获取需要调用的原始生成器函数
+    stack_postprocessing_generator = stack_postprocessing
     
     # 处理每个输入文件
     for input_file in input_files:
@@ -259,7 +271,8 @@ def predict_3d(model_config_path, input_path, output_dir, args):
         
         # 加载图像
         print(f"Loading image from {input_file}...")
-        image = tiff.imread(input_file)
+        image_sitk = sitk.ReadImage(input_file)
+        image = sitk.GetArrayFromImage(image_sitk)
         
         # 检查图像维度
         if image.ndim != 3:
@@ -268,81 +281,51 @@ def predict_3d(model_config_path, input_path, output_dir, args):
         
         print(f"Image loaded with shape: {image.shape}")
         
-        # 进行ortho-plane推断
-        trackers_dict = {}
+        # 只在xy平面进行推断
+        axis_name = 'xy'
+        print(f"Running inference on {axis_name} plane...")
+        _, trackers = engine.infer_on_axis(image, axis_name)
         
-        # 获取需要调用的原始生成器函数
-        stack_postprocessing_generator = stack_postprocessing.__wrapped__
-        
-        for axis_name in args.axes:
-            print(f"Running inference on {axis_name} plane...")
-            _, trackers = engine.infer_on_axis(image, axis_name)
-            trackers_dict[axis_name] = trackers
-            
-            # 为当前平面后处理并生成分割体
-            print(f"Post-processing and saving result for {axis_name} plane...")
-            plane_postprocess_worker = stack_postprocessing_generator(
-                {axis_name: trackers},
-                store_url=None,
-                model_config=model_config,
-                min_size=args.min_size,
-                min_extent=args.min_extent,
-            )
-            
-            plane_segmentation = None
-            for seg_vol, class_name, _ in plane_postprocess_worker:
-                print(f"  Generated stack for class '{class_name}' from {axis_name} plane.")
-                if plane_segmentation is None:
-                    plane_segmentation = seg_vol
-            
-            if plane_segmentation is not None:
-                # 去掉_0000后缀（如果存在）
-                clean_filename = base_filename.replace('_0000', '')
-                output_path = os.path.join(output_dir, f"{clean_filename}_{axis_name}.tiff")
-                print(f"  Saving {axis_name} segmentation to {output_path}...")
-                tiff.imwrite(output_path, plane_segmentation.astype(np.uint16), compression='zlib')
-            else:
-                print(f"  Could not generate segmentation for {axis_name} plane.")
-        
-        # 计算并保存最终共识
-        print("\nGenerating final consensus segmentation...")
-        consensus_generator = tracker_consensus.__wrapped__
-        consensus_worker = consensus_generator(
-            trackers_dict,
+        # 后处理并生成分割体
+        print(f"Post-processing and generating segmentation...")
+        plane_postprocess_worker = stack_postprocessing_generator(
+            {axis_name: trackers},
             store_url=None,
             model_config=model_config,
-            pixel_vote_thr=args.pixel_vote_thr,
             min_size=args.min_size,
             min_extent=args.min_extent,
         )
         
-        final_segmentation = None
-        for consensus_vol, class_name, _ in consensus_worker:
-            print(f"Generated consensus for class '{class_name}'.")
-            if final_segmentation is None:
-                final_segmentation = consensus_vol
+        plane_segmentation = None
+        for seg_vol, class_name, _ in plane_postprocess_worker:
+            print(f"  Generated stack for class '{class_name}' from {axis_name} plane.")
+            if plane_segmentation is None:
+                plane_segmentation = seg_vol
         
-        if final_segmentation is not None:
-            # 去掉_0000后缀（如果存在）
+        if plane_segmentation is not None:
+            # 去掉_0000后缀（如果存在），保存为不带axis_name的文件
             clean_filename = base_filename.replace('_0000', '')
-            output_path = os.path.join(output_dir, f"{clean_filename}.tiff")
-            print(f"Saving final consensus segmentation to {output_path}...")
-            tiff.imwrite(output_path, final_segmentation.astype(np.uint16), compression='zlib')
+            output_path = os.path.join(output_dir, f"{clean_filename}.nii.gz")
+            print(f"  Saving segmentation to {output_path}...")
+            # 使用SimpleITK保存NII.GZ文件
+            seg_sitk = sitk.GetImageFromArray(plane_segmentation.astype(np.uint16))
+            sitk.WriteImage(seg_sitk, output_path)
         else:
-            print("Could not generate final consensus segmentation.")
+            print(f"  Could not generate segmentation for {axis_name} plane.")
     
     print("\n" + "="*60)
     print("All prediction tasks completed!")
     print(f"Results saved to: {output_dir}")
     print("="*60)
 
-def evaluate_predictions(pred_dir, gt_dir, output_csv=None):
+def evaluate_predictions(pred_dir, gt_dir, mask_dir=None, output_csv=None):
     """
     评估预测结果与ground truth
     
     Args:
-        pred_dir: 预测结果目录（包含.tiff预测文件）
+        pred_dir: 预测结果目录（包含.nii.gz预测文件）
         gt_dir: ground truth目录（包含对应的实例分割文件）
+        mask_dir: 掩码目录（包含对应的掩码文件）
         output_csv: 评估结果保存路径（CSV文件）
     
     Returns:
@@ -353,13 +336,13 @@ def evaluate_predictions(pred_dir, gt_dir, output_csv=None):
     print(f"{'='*60}")
     print(f"Prediction directory: {pred_dir}")
     print(f"Ground truth directory: {gt_dir}")
+    print(f"Mask directory: {mask_dir}")
+    # 找到所有预测文件（.nii.gz格式）
+    pred_files = sorted(glob(os.path.join(pred_dir, '*.nii.gz')))
     
-    # 找到所有预测文件（.tiff格式）
-    pred_files = sorted(glob(os.path.join(pred_dir, '*.tiff')))
-    
-    # 如果没有.tiff，尝试.tif
+    # 如果没有.nii.gz，尝试.nii
     if not pred_files:
-        pred_files = sorted(glob(os.path.join(pred_dir, '*.tif')))
+        pred_files = sorted(glob(os.path.join(pred_dir, '*.nii')))
     
     if not pred_files:
         print("Warning: No prediction files found!")
@@ -371,23 +354,38 @@ def evaluate_predictions(pred_dir, gt_dir, output_csv=None):
     
     for pred_file in pred_files:
         # 从预测文件名推断ground truth文件名
-        base_name = os.path.basename(pred_file).replace('.tiff', '').replace('.tif', '')
+        base_name = os.path.basename(pred_file).replace('.nii.gz', '').replace('.tiff', '')
         
         # 尝试不同的ground truth文件名格式
         gt_candidates = [
-            os.path.join(gt_dir, f"{base_name}.tiff"),
-            os.path.join(gt_dir, f"{base_name}.tif"),
-            os.path.join(gt_dir, f"{base_name}_0000.tiff"),
+            os.path.join(gt_dir, f"{base_name}.nii.gz"),
+            os.path.join(gt_dir, f"{base_name}.nii"),
+            os.path.join(gt_dir, f"{base_name}_0000.nii.gz"),
+        ]
+        mask_candidates = [
+            os.path.join(mask_dir, f"{base_name}.nii.gz"),
+            os.path.join(mask_dir, f"{base_name}.nii"),
+            os.path.join(mask_dir, f"{base_name}_0000.nii.gz"),
         ]
         
         gt_file = None
+        mask_file = None
         for candidate in gt_candidates:
             if os.path.exists(candidate):
                 gt_file = candidate
                 break
         
+        for candidate in mask_candidates:
+            if os.path.exists(candidate):
+                mask_file = candidate
+                break
+        
         if gt_file is None:
             print(f"Warning: No ground truth found for {base_name}, skipping...")
+            continue
+        
+        if mask_file is None:
+            print(f"Warning: No mask found for {base_name}, skipping...")
             continue
         
         print(f"\nEvaluating: {base_name}")
@@ -399,6 +397,7 @@ def evaluate_predictions(pred_dir, gt_dir, output_csv=None):
             metrics = evaluate_res(
                 pred_file=pred_file,
                 gt_file=gt_file,
+                mask_file=mask_file,
                 save_results=False  # 我们会统一保存结果
             )
             
@@ -475,13 +474,15 @@ def main():
                        help="Mode: 'train' for training, 'predict' for prediction.")
     
     # 训练模式参数
+    parser.add_argument("-d", "--dataset", type=str, default=None,
+                       help="[Train mode] Dataset name or ID (e.g., Dataset001_MitoHardBeta or 1).")
     parser.add_argument("--dataset_path", type=str, nargs='?', default=None,
-                       help="[Train mode] Path to the nnUNet dataset directory (e.g., /path/to/Dataset004_MitoHardCardiac).")
+                       help="[Train mode] (Deprecated) Use -d/--dataset instead. Path to the nnUNet dataset directory.")
     parser.add_argument("--model_dir", type=str, nargs='?', default=None,
                        help="[Train mode] Directory to save the fine-tuned model; [Predict mode] Not used.")
     parser.add_argument("--output_data_path", type=str, default=None, 
                        help="[Train mode] Path to save converted 2D slices.")
-    parser.add_argument("--model_config", type=str, default="MitoNet_v1.yaml", 
+    parser.add_argument("--model_config", type=str, default="configs/MitoNet_v1.yaml", 
                        help="[Train mode] Path to the base model config file to fine-tune.")
     parser.add_argument("--model_name", type=str, default="FinetunedMitoNet", 
                        help="[Train mode] Name for the new fine-tuned model.")
@@ -499,10 +500,7 @@ def main():
     parser.add_argument("--skip_conversion", action='store_true', 
                        help="[Train mode] Skip 3D to 2D conversion if data is already converted.")
     parser.add_argument("--test_after_training", action='store_true',
-                       help="[Train mode] Automatically test on imagesTs and evaluate after training.")
-    parser.add_argument("--test_axes", type=str, nargs='+', default=['xy', 'xz', 'yz'],
-                       choices=['xy', 'xz', 'yz'],
-                       help="[Train mode] Axes for testing. Default: xy xz yz")
+                       help="[Train mode] Automatically test on imagesTs and evaluate after training (using XY plane).")
     
     # 预测模式参数
     parser.add_argument("--trained_model", type=str, default=None,
@@ -515,9 +513,6 @@ def main():
     # 预测模式的推理参数
     parser.add_argument("--use_gpu", action="store_true", 
                        help="[Predict mode] Use GPU for inference if available.")
-    parser.add_argument("--axes", type=str, nargs='+', default=['xy', 'xz', 'yz'], 
-                       choices=['xy', 'xz', 'yz'], 
-                       help="[Predict mode] Axes to perform inference on. Default: xy xz yz")
     parser.add_argument("--downsampling", type=int, default=1, 
                        help="[Predict mode] Image downsampling factor.")
     parser.add_argument("--confidence_thr", type=float, default=0.5, 
@@ -548,11 +543,34 @@ def main():
         predict_3d(args.trained_model, args.input, args.output, args)
         return
     
-    # 训练模式（原有逻辑）
-    if not args.dataset_path:
-        parser.error("dataset_path is required in train mode")
+    # 训练模式：处理dataset参数
+    if args.dataset:
+        # 使用新的-d参数
+        dataset_name = maybe_convert_to_dataset_name(args.dataset)
+        dataset_path = os.path.join(nnUNet_raw, dataset_name)
+        
+        if not os.path.exists(dataset_path):
+            raise ValueError(f"Dataset directory does not exist: {dataset_path}")
+        
+        print(f"nnUNet_raw: {nnUNet_raw}")
+        print(f"Dataset input: {args.dataset}")
+        print(f"Dataset name: {dataset_name}")
+        print(f"Dataset root: {dataset_path}")
+        
+        args.dataset_path = dataset_path
+    elif args.dataset_path:
+        # 使用旧的dataset_path参数（向后兼容）
+        dataset_path = args.dataset_path
+        print(f"Using dataset_path: {dataset_path}")
+    else:
+        parser.error("Either -d/--dataset or --dataset_path is required in train mode")
+    
     if not args.model_dir:
         parser.error("model_dir is required in train mode")
+    
+    # 创建模型输出目录（如果不存在）
+    os.makedirs(args.model_dir, exist_ok=True)
+    print(f"Model will be saved to: {args.model_dir}")
 
     # 设置输出数据路径
     if args.output_data_path is None:
@@ -571,8 +589,7 @@ def main():
     print("\nLoading base finetune configuration...")
     # 从 empanada_napari 加载默认的微调配置
     import empanada_napari
-    base_dir = os.path.dirname(empanada_napari.__file__)
-    main_config_path = os.path.join(base_dir, 'training/finetune_config.yaml')
+    main_config_path = "configs/mitonet_finetune_config.yaml"
     config = load_config(main_config_path)
 
     print(f"Loading model-specific config from {args.model_config}...")
@@ -664,6 +681,9 @@ def main():
         # 检查是否存在测试数据
         imagesTs_path = os.path.join(args.dataset_path, 'imagesTs')
         instancesTs_path = os.path.join(args.dataset_path, 'instancesTs')
+        masksTs_path = os.path.join(args.dataset_path, 'masksTs')
+        if not os.path.exists(masksTs_path):
+            masksTs_path = None
         
         if not os.path.exists(imagesTs_path):
             print(f"Warning: imagesTs directory not found at {imagesTs_path}")
@@ -687,7 +707,6 @@ def main():
             class TestArgs:
                 def __init__(self):
                     self.use_gpu = torch.cuda.is_available()
-                    self.axes = args.test_axes
                     self.downsampling = 1
                     self.confidence_thr = 0.5
                     self.center_confidence_thr = 0.1
@@ -713,7 +732,7 @@ def main():
                 eval_dir = os.path.join(test_output_dir, 'evaluation')
                 os.makedirs(eval_dir, exist_ok=True)
                 eval_csv = os.path.join(eval_dir, 'evaluation_results.csv')
-                eval_results = evaluate_predictions(test_output_dir, instancesTs_path, eval_csv)
+                eval_results = evaluate_predictions(test_output_dir, instancesTs_path, masksTs_path, eval_csv)
                 
                 if eval_results is not None:
                     print("\n✅ Testing and evaluation completed successfully!")

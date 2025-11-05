@@ -6,48 +6,125 @@ import numpy as np
 from tqdm import tqdm
 import sys
 import glob
+import yaml
 
+
+sys.path.append('/projects/weilab/liupeng/MitoAnnotation/src')
 from empanada.config_loaders import read_yaml
 from empanada_napari.inference import Engine3d, tracker_consensus, stack_postprocessing
+from nnunetv2.paths import nnUNet_raw
+from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 
 # Import evaluation module
-sys.path.append('/projects/weilab/liupeng/MitoAnnotation/src')
+
 from evaluation.evaluate_res import evaluate_res
+
+def load_config_yaml(config_file):
+    """Load configuration from YAML file"""
+    with open(config_file, 'r') as f:
+        return yaml.safe_load(f)
 
 def main():
     parser = argparse.ArgumentParser(description="3D Mitochondria Segmentation Script")
-    parser.add_argument("-i", "--input", type=str, required=True, help="Path to the input 3D TIFF image or directory.")
-    parser.add_argument("-o", "--output", type=str, required=True, help="Path to the directory to save the output segmentations.")
-    parser.add_argument("-c", "--config_path", type=str, default="MitoNet_v1.yaml", help="Path to the model config file.")
-    parser.add_argument("--gt", type=str, default=None, help="Path to the ground truth TIFF image or directory for evaluation.")
-    parser.add_argument("--eval", action="store_true", help="Enable evaluation mode if ground truth is provided.")
-    parser.add_argument("--downsampling", type=int, default=1, help="Image downsampling factor.")
-    parser.add_argument("--confidence_thr", type=float, default=0.5, help="Segmentation confidence threshold.")
-    parser.add_argument("--center_confidence_thr", type=float, default=0.1, help="Center confidence threshold.")
-    parser.add_argument("--min_distance_object_centers", type=int, default=3, help="Minimum distance between object centers.")
-    parser.add_argument("--min_size", type=int, default=500, help="Minimum size of objects in voxels.")
-    parser.add_argument("--min_extent", type=int, default=5, help="Minimum bounding box extent for objects.")
-    parser.add_argument("--pixel_vote_thr", type=int, default=2, help="Voxel vote threshold for ortho-plane consensus.")
-    parser.add_argument("--use_gpu", action="store_true", help="Use GPU for inference if available.")
-    parser.add_argument("--axes", type=str, nargs='+', default=['xy', 'xz', 'yz'], 
-                        choices=['xy', 'xz', 'yz'], help="Axes to perform inference on. Default: xy xz yz")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to YAML config file. If provided, loads parameters from config.")
+    parser.add_argument("-d", "--dataset", type=str, default=None,
+                        help="Dataset name or ID (e.g., Dataset001_MitoHardBeta or 1).")
+    parser.add_argument("-c", "--config_path", type=str, default=None,
+                        help="Path to the model config file.")
+    parser.add_argument("--eval", action="store_true", default=None,
+                        help="Enable evaluation mode if ground truth is provided.")
+    parser.add_argument("--downsampling", type=int, default=None,
+                        help="Image downsampling factor.")
+    parser.add_argument("--confidence_thr", type=float, default=None,
+                        help="Segmentation confidence threshold.")
+    parser.add_argument("--center_confidence_thr", type=float, default=None,
+                        help="Center confidence threshold.")
+    parser.add_argument("--min_distance_object_centers", type=int, default=None,
+                        help="Minimum distance between object centers.")
+    parser.add_argument("--min_size", type=int, default=None,
+                        help="Minimum size of objects in voxels.")
+    parser.add_argument("--min_extent", type=int, default=None,
+                        help="Minimum bounding box extent for objects.")
+    parser.add_argument("--pixel_vote_thr", type=int, default=None,
+                        help="Voxel vote threshold for ortho-plane consensus.")
+    parser.add_argument("--use_gpu", action="store_true", default=None,
+                        help="Use GPU for inference if available.")
+    parser.add_argument("--axes", type=str, nargs='+', default=None,
+                        choices=['xy', 'xz', 'yz'],
+                        help="Axes to perform inference on. Default: xy xz yz")
+    
     args = parser.parse_args()
+    
+    # Load config from YAML if provided
+    if args.config:
+        print(f"Loading configuration from {args.config}")
+        config = load_config_yaml(args.config)
+        
+        # Apply config values (command line args override config file)
+        for key, value in config.items():
+            if hasattr(args, key) and getattr(args, key) is None:
+                setattr(args, key, value)
+    
+    # Set default values if still None
+    if args.dataset is None:
+        parser.error("--dataset or --config (with dataset specified) is required")
+    if args.config_path is None:
+        args.config_path = "configs/MitoNet_v1.yaml"
+    if args.eval is None:
+        args.eval = False
+    if args.downsampling is None:
+        args.downsampling = 1
+    if args.confidence_thr is None:
+        args.confidence_thr = 0.5
+    if args.center_confidence_thr is None:
+        args.center_confidence_thr = 0.1
+    if args.min_distance_object_centers is None:
+        args.min_distance_object_centers = 3
+    if args.min_size is None:
+        args.min_size = 500
+    if args.min_extent is None:
+        args.min_extent = 5
+    if args.pixel_vote_thr is None:
+        args.pixel_vote_thr = 2
+    if args.use_gpu is None:
+        args.use_gpu = False
+    if args.axes is None:
+        args.axes = ['xy', 'xz', 'yz']
 
-    # 检查输入是文件还是目录
-    if os.path.isfile(args.input):
-        input_files = [args.input]
-    elif os.path.isdir(args.input):
-        # 查找所有tiff文件
-        input_files = []
-        for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
-            input_files.extend(glob.glob(os.path.join(args.input, ext)))
-        if not input_files:
-            raise ValueError(f"No TIFF files found in directory: {args.input}")
-    else:
-        raise ValueError(f"Input path does not exist: {args.input}")
+    # 转换 dataset name 或 ID 为标准 dataset name
+    dataset_name = maybe_convert_to_dataset_name(args.dataset)
+    
+    # 构建数据集根目录
+    dataset_root = os.path.join(nnUNet_raw, dataset_name)
+    if not os.path.exists(dataset_root):
+        raise ValueError(f"Dataset directory does not exist: {dataset_root}")
+    
+    # 设置输入和输出路径
+    input_dir = os.path.join(dataset_root, "imagesTs")
+    if not os.path.exists(input_dir):
+        raise ValueError(f"Input directory does not exist: {input_dir}")
+    
+    output_dir = os.path.join(dataset_root, "imagesTs_mitoNet_ZS")
+    gt_dir = os.path.join(dataset_root, "instancesTs")
+    mask_dir = os.path.join(dataset_root, "masksTs")
+    
+    # 查找所有tiff文件
+    input_files = []
+    for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
+        input_files.extend(glob.glob(os.path.join(input_dir, ext)))
+    if not input_files:
+        raise ValueError(f"No TIFF files found in directory: {input_dir}")
     
     # 检查并创建输出目录
-    os.makedirs(args.output, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"nnUNet_raw: {nnUNet_raw}")
+    print(f"Dataset input: {args.dataset}")
+    print(f"Dataset name: {dataset_name}")
+    print(f"Dataset root: {dataset_root}")
+    print(f"Input directory: {input_dir}")
+    print(f"Output directory: {output_dir}")
     
     print(f"Found {len(input_files)} file(s) to process")
     
@@ -99,9 +176,6 @@ def main():
         # 进行ortho-plane推断并保存每个平面的结果
         trackers_dict = {}
         
-        # 获取需要调用的原始生成器函数
-        stack_postprocessing_generator = stack_postprocessing.__wrapped__
-        
         for axis_name in args.axes:
             print(f"Running inference on {axis_name} plane...")
             _, trackers = engine.infer_on_axis(image, axis_name)
@@ -109,7 +183,7 @@ def main():
             
             # 为当前平面后处理并生成分割体
             print(f"Post-processing and saving result for {axis_name} plane...")
-            plane_postprocess_worker = stack_postprocessing_generator(
+            plane_postprocess_worker = stack_postprocessing(
                 {axis_name: trackers}, # 只传入当前平面的tracker
                 store_url=None,
                 model_config=model_config,
@@ -124,7 +198,7 @@ def main():
                     plane_segmentation = seg_vol
             
             if plane_segmentation is not None:
-                output_path = os.path.join(args.output, f"{base_filename}_{axis_name}.tiff")
+                output_path = os.path.join(output_dir, f"{base_filename}_{axis_name}.tiff")
                 print(f"  Saving {axis_name} segmentation to {output_path}...")
                 tifffile.imwrite(output_path, plane_segmentation.astype(np.uint16), compression='zlib')
             else:
@@ -133,8 +207,7 @@ def main():
 
         # 计算并保存最终共识
         print("\nGenerating final consensus segmentation...")
-        consensus_generator = tracker_consensus.__wrapped__
-        consensus_worker = consensus_generator(
+        consensus_worker = tracker_consensus(
             trackers_dict,
             store_url=None,
             model_config=model_config,
@@ -150,7 +223,7 @@ def main():
                 final_segmentation = consensus_vol
 
         if final_segmentation is not None:
-            output_path = os.path.join(args.output, f"{base_filename}.tiff").replace("_0000", "")
+            output_path = os.path.join(output_dir, f"{base_filename}.tiff").replace("_0000", "")
             print(f"Saving final consensus segmentation to {output_path}...")
             tifffile.imwrite(output_path, final_segmentation.astype(np.uint16), compression='zlib')
             consensus_output_files.append(output_path)
@@ -161,46 +234,28 @@ def main():
     print("All inference tasks completed!")
     print("="*60)
     
-    # 如果启用评估且提供了ground truth
-    if args.eval and args.gt:
+    # 如果启用评估
+    if args.eval:
         print("\n" + "="*60)
         print("Starting evaluation...")
         print("="*60)
         
-        try:
-            # 判断是单文件还是目录评估
-            if os.path.isfile(args.gt) and len(consensus_output_files) == 1:
-                # 单文件评估
-                print(f"\nEvaluating single file:")
-                print(f"  Prediction: {consensus_output_files[0]}")
-                print(f"  Ground Truth: {args.gt}")
-                
-                metrics = evaluate_res(
-                    pred_file=consensus_output_files[0],
-                    gt_file=args.gt,
-                    save_results=True
-                )
-                
-                print("\n" + "-"*60)
-                print("Evaluation Results:")
-                print("-"*60)
-                for key, value in metrics.items():
-                    if key not in ["matched_pairs", "matched_scores", "pred_file", "gt_file", "file_name"]:
-                        if isinstance(value, float):
-                            print(f"  {key}: {value:.4f}")
-                        else:
-                            print(f"  {key}: {value}")
-                            
-            elif os.path.isdir(args.gt) and os.path.isdir(args.output):
+        # 检查ground truth目录是否存在
+        if not os.path.exists(gt_dir):
+            print(f"\nWarning: Ground truth directory does not exist: {gt_dir}")
+            print("Skipping evaluation.")
+        else:
+            try:
                 # 目录评估
                 print(f"\nEvaluating directory:")
-                print(f"  Prediction Directory: {args.output}")
-                print(f"  Ground Truth Directory: {args.gt}")
+                print(f"  Prediction Directory: {output_dir}")
+                print(f"  Ground Truth Directory: {gt_dir}")
                 
                 from evaluation.evaluate_res import evaluate_directory
                 results, summary = evaluate_directory(
-                    pred_dir=args.output,
-                    gt_dir=args.gt,
+                    pred_dir=output_dir,
+                    gt_dir=gt_dir,
+                    mask_dir=mask_dir,
                     save_results=True
                 )
                 
@@ -212,18 +267,11 @@ def main():
                         print(f"  {key}: {value:.4f}")
                     else:
                         print(f"  {key}: {value}")
-            else:
-                print("\nWarning: Ground truth format does not match prediction format.")
-                print("  - For single file: provide a single GT file")
-                print("  - For directory: provide a GT directory with matching filenames")
-                
-        except Exception as e:
-            print(f"\nError during evaluation: {e}")
-            import traceback
-            traceback.print_exc()
-            
-    elif args.eval and not args.gt:
-        print("\nWarning: --eval flag is set but no ground truth (--gt) provided. Skipping evaluation.")
+                    
+            except Exception as e:
+                print(f"\nError during evaluation: {e}")
+                import traceback
+                traceback.print_exc()
     
     print("\n" + "="*60)
     print("All tasks completed!")

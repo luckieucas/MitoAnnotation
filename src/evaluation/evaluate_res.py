@@ -1,6 +1,7 @@
 
 import argparse
 import tifffile
+import SimpleITK as sitk
 import numpy as np
 import pandas as pd
 import os
@@ -10,6 +11,39 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from skimage.segmentation import relabel_sequential
 from connectomics.utils.evaluate import _check_label_array,_raise,matching_criteria,label_overlap
+
+
+def read_image_file(file_path):
+    """
+    Read image file using appropriate library based on file extension.
+    Supports both TIFF (using tifffile) and NII.GZ (using SimpleITK) formats.
+    
+    Parameters
+    ----------
+    file_path : str
+        Path to the image file
+        
+    Returns
+    -------
+    numpy.ndarray
+        Image array
+    """
+    if isinstance(file_path, str):
+        file_ext = os.path.splitext(file_path.lower())[-1]
+        # Handle .nii.gz extension
+        if file_path.lower().endswith('.nii.gz'):
+            file_ext = '.nii.gz'
+        
+        if file_ext in ['.nii', '.nii.gz']:
+            # Use SimpleITK for NII.GZ files
+            sitk_image = sitk.ReadImage(file_path)
+            return sitk.GetArrayFromImage(sitk_image)
+        else:
+            # Use tifffile for TIFF files
+            return tifffile.imread(file_path)
+    else:
+        # If file_path is already an array, return it
+        return file_path
 
 
 def compute_precision_recall_f1(pred_mask, true_mask):
@@ -37,12 +71,12 @@ def compute_precision_recall_f1(pred_mask, true_mask):
     FP = np.sum((pred_mask == 1) & (true_mask == 0))
     FN = np.sum((pred_mask == 0) & (true_mask == 1))
 
-    # Precision, Recall, F1
+    # Precision, Recall, F1, Accuracy
     precision = TP / (TP + FP) if (TP + FP) > 0 else 0
     recall = TP / (TP + FN) if (TP + FN) > 0 else 0
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-
-    return precision, recall, f1
+    accuracy = TP / (TP + FP + FN) if (TP + FP + FN) > 0 else 0
+    return precision, recall, f1, accuracy
 
 def instance_matching(y_true, y_pred, thresh=0.5, criterion='iou', report_matches=False):
     """Calculate detection/instance segmentation metrics between ground truth and predicted label images."""
@@ -116,17 +150,18 @@ def instance_matching(y_true, y_pred, thresh=0.5, criterion='iou', report_matche
 def evaluate_single_file(pred_file, gt_file, save_results=True, mask_file=None):
     """
     Evaluate a single prediction file against ground truth.
+    Supports both TIFF and NII.GZ file formats.
     
     Parameters
     ----------
-    pred_file : str
-        Path to the prediction file
-    gt_file : str
-        Path to the ground truth file
+    pred_file : str or np.ndarray
+        Path to the prediction file (TIFF or NII.GZ) or numpy array
+    gt_file : str or np.ndarray
+        Path to the ground truth file (TIFF or NII.GZ) or numpy array
     save_results : bool
         Whether to save results to files
-    mask_file : str, optional
-        Path to the mask file. If provided, only evaluate regions where mask > 0
+    mask_file : str or np.ndarray, optional
+        Path to the mask file (TIFF or NII.GZ) or numpy array. If provided, only evaluate regions where mask > 0
         
     Returns
     -------
@@ -135,22 +170,12 @@ def evaluate_single_file(pred_file, gt_file, save_results=True, mask_file=None):
     """
     try:
         # Load images
-        if isinstance(gt_file, str):
-            y_true = tifffile.imread(gt_file)
-        else:
-            y_true = gt_file
-            
-        if isinstance(pred_file, str):
-            y_pred = tifffile.imread(pred_file)
-        else:
-            y_pred = pred_file
+        y_true = read_image_file(gt_file)
+        y_pred = read_image_file(pred_file)
             
         # Apply mask if provided
         if mask_file is not None:
-            if isinstance(mask_file, str):
-                mask = tifffile.imread(mask_file)
-            else:
-                mask = mask_file
+            mask = read_image_file(mask_file)
             
             # Check if mask shape matches
             if mask.shape != y_pred.shape:
@@ -165,13 +190,13 @@ def evaluate_single_file(pred_file, gt_file, save_results=True, mask_file=None):
         metrics = instance_matching(y_true, y_pred, report_matches=True, thresh=0.5)
         
         # Calculate binary recall and precision
-        binary_recall, binary_precision, binary_f1 = compute_precision_recall_f1(
+        binary_recall, binary_precision, binary_f1, bianry_accuracy = compute_precision_recall_f1(
             y_pred>0, y_true>0
         )
         metrics["binary_recall"] = binary_recall
         metrics["binary_precision"] = binary_precision
         metrics["binary_f1"] = binary_f1
-        
+        metrics["binary_accuracy"] = bianry_accuracy        
         # Add file information
         metrics["pred_file"] = pred_file
         metrics["gt_file"] = gt_file
@@ -221,13 +246,14 @@ def evaluate_res(pred_file="res_tif/pred_mask.tif",
                  mask_file=None):
     """
     Evaluate the prediction result using instance matching metrics.
+    Supports both TIFF and NII.GZ file formats.
     
     Parameters
     ----------
     pred_file : str or np.ndarray
-        The path to the prediction result tif file or directory containing tif files.
+        The path to the prediction result file (TIFF or NII.GZ) or directory containing image files.
     gt_file : str or np.ndarray
-        The path to the ground truth tif file or directory containing tif files.
+        The path to the ground truth file (TIFF or NII.GZ) or directory containing image files.
     save_results : bool
         Whether to save results to files.
     mask_file : str, optional
@@ -245,21 +271,21 @@ def evaluate_res(pred_file="res_tif/pred_mask.tif",
     
     # Handle directory evaluation
     elif os.path.isdir(pred_file) or os.path.isdir(gt_file):
-        return evaluate_directory(pred_file, gt_file, save_results, mask_file=mask_file)
+        return evaluate_directory(pred_file, gt_file, mask_dir=mask_file, save_results=save_results, max_workers=max_workers)
     
     else:
         raise ValueError(f"Invalid input: {pred_file} or {gt_file}")
 
-def evaluate_directory(pred_dir, gt_dir, save_results=True, max_workers=None, mask_file=None):
+def evaluate_directory(pred_dir, gt_dir, mask_dir=None, save_results=True, max_workers=None):
     """
-    Evaluate all tif files in prediction directory against corresponding files in ground truth directory.
+    Evaluate all image files (TIFF or NII.GZ) in prediction directory against corresponding files in ground truth directory.
     
     Parameters
     ----------
     pred_dir : str
-        Path to directory containing prediction tif files
+        Path to directory containing prediction files (TIFF or NII.GZ)
     gt_dir : str
-        Path to directory containing ground truth tif files
+        Path to directory containing ground truth files (TIFF or NII.GZ)
     save_results : bool
         Whether to save individual results
     max_workers : int
@@ -274,23 +300,30 @@ def evaluate_directory(pred_dir, gt_dir, save_results=True, max_workers=None, ma
     summary : dict
         Summary statistics across all files
     """
-    # Find all tif files in prediction directory
-    pred_patterns = ['*.tif', '*.tiff', '*.TIF', '*.TIFF']
+    # Find all image files in prediction directory (support both TIFF and NII.GZ)
+    pred_patterns = ['*.tif', '*.tiff', '*.TIF', '*.TIFF', '*.nii.gz', '*.nii', '*.NII.GZ', '*.NII']
     pred_files = []
     for pattern in pred_patterns:
         pred_files.extend(glob.glob(os.path.join(pred_dir, pattern)))
     
     if not pred_files:
-        raise ValueError(f"No tif files found in {pred_dir}")
+        raise ValueError(f"No image files (TIFF or NII.GZ) found in {pred_dir}")
     
     # Find corresponding ground truth files
     file_pairs = []
     for pred_file in pred_files:
         pred_name = os.path.basename(pred_file)
         gt_file = os.path.join(gt_dir, pred_name)
+        if mask_dir is not None:
+            mask_file = os.path.join(mask_dir, pred_name)
+            if not os.path.exists(mask_file):
+                print(f"Warning: Mask file not found for {pred_file}")
+                mask_file = None
+        else:
+            mask_file = None
         
         if os.path.exists(gt_file):
-            file_pairs.append((pred_file, gt_file))
+            file_pairs.append((pred_file, gt_file, mask_file))
         else:
             print(f"Warning: Ground truth file not found for {pred_file}")
     
@@ -311,7 +344,7 @@ def evaluate_directory(pred_dir, gt_dir, save_results=True, max_workers=None, ma
         # Submit all tasks
         future_to_pair = {
             executor.submit(evaluate_single_file, pred_file, gt_file, save_results, mask_file): (pred_file, gt_file)
-            for pred_file, gt_file in file_pairs
+            for pred_file, gt_file, mask_file in file_pairs
         }
         
         # Collect results as they complete
@@ -367,7 +400,7 @@ def calculate_summary_statistics(results):
     """
     # Extract numeric metrics
     numeric_metrics = ['precision', 'recall', 'f1', 'accuracy', 'panoptic_quality',
-                      'binary_precision', 'binary_recall', 'binary_f1',
+                      'binary_precision', 'binary_recall', 'binary_f1', 'binary_accuracy',
                       'mean_true_score', 'mean_matched_score']
     
     summary = {}
@@ -477,7 +510,7 @@ if __name__ == '__main__':
     if os.path.isdir(args.pred_file) or os.path.isdir(args.gt_file):
         results, summary = evaluate_directory(args.pred_file, args.gt_file, 
                                             save_results=save_results, max_workers=max_workers,
-                                            mask_file=args.mask_file)
+                                            mask_dir=args.mask_file)
         
         print("\nOverall Summary:")
         for key, value in summary.items():

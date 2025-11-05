@@ -11,6 +11,9 @@ def stretch_invert_small(in_path, out_path, p_low=1.0, p_high=99.0, compression=
         raise ValueError(f"Expect 3D (Z,Y,X), got {vol.shape}")
     orig_dtype = vol.dtype
 
+    # 保存背景掩码（原始值为0的位置）
+    background_mask = (vol == 0)
+
     if use_stretch:
         # 全局分位点 + 对比度拉伸到 [0,1]
         p1, p99 = np.percentile(vol, [p_low, p_high])
@@ -35,6 +38,9 @@ def stretch_invert_small(in_path, out_path, p_low=1.0, p_high=99.0, compression=
         out = (maxv - np.rint(vol_f * maxv)).astype(orig_dtype, copy=False)
     else:
         out = (1.0 - vol_f).astype(np.float32, copy=False)
+    
+    # 将背景（原始值为0的位置）设置回0
+    out[background_mask] = 0
 
     # 一次性写为 ImageJ 栈（常见查看器能识别为 3D）
     tiff.imwrite(

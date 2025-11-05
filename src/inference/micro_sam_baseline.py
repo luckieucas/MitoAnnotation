@@ -11,10 +11,15 @@ from pathlib import Path
 from typing import Optional, Union, Tuple, List
 from skimage.segmentation import relabel_sequential
 from skimage import measure
+import SimpleITK as sitk
 
 # 假设您已经将 micro_sam 添加到了您的 Python 路径中
 from micro_sam.automatic_segmentation import get_predictor_and_segmenter, automatic_instance_segmentation
 from micro_sam.util import get_model_names
+
+# Import nnUNet path utilities
+from nnunetv2.paths import nnUNet_raw
+from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
 
 # Import evaluation module
 sys.path.append('/projects/weilab/liupeng/MitoAnnotation/src')
@@ -175,38 +180,43 @@ def run_automatic_instance_segmentation(
 
 def get_nnunet_input_files(dataset_path: str) -> List[str]:
     """
-    Get all TIFF files from the imagesTs directory of an nnUNet dataset.
+    Get all image files (TIFF and NIfTI) from the imagesTs directory of an nnUNet dataset.
     
     Args:
         dataset_path: Path to the nnUNet dataset root directory
         
     Returns:
-        List of paths to TIFF files
+        List of paths to image files
     """
     images_dir = os.path.join(dataset_path, "imagesTs")
     if not os.path.exists(images_dir):
         raise ValueError(f"imagesTs directory not found: {images_dir}")
     
-    # Find all TIFF files
-    tiff_files = []
+    # Find all TIFF and NIfTI files
+    image_files = []
+    # TIFF files
     for ext in ['*.tif', '*.tiff', '*.TIF', '*.TIFF']:
-        tiff_files.extend(glob.glob(os.path.join(images_dir, ext)))
+        image_files.extend(glob.glob(os.path.join(images_dir, ext)))
+    # NIfTI files
+    for ext in ['*.nii.gz', '*.nii', '*.NII.GZ', '*.NII']:
+        image_files.extend(glob.glob(os.path.join(images_dir, ext)))
     
-    if not tiff_files:
-        raise ValueError(f"No TIFF files found in {images_dir}")
+    if not image_files:
+        raise ValueError(f"No image files (TIFF or NIfTI) found in {images_dir}")
     
-    tiff_files.sort()
-    return tiff_files
+    image_files.sort()
+    return image_files
 
 def get_output_filename(input_filename: str) -> str:
     """
     Convert nnUNet input filename to output filename by removing _0000 suffix.
+    Preserves the original file extension.
     
     Args:
-        input_filename: Original filename (e.g., 'sample_0000.tiff')
+        input_filename: Original filename (e.g., 'sample_0000.tiff' or 'sample_0000.nii.gz')
         
     Returns:
-        Output filename (e.g., 'sample.tiff')
+        Output filename (e.g., 'sample.tiff' or 'sample.nii.gz')
     """
     name = os.path.basename(input_filename)
     # Remove _0000 suffix if present
@@ -214,15 +224,86 @@ def get_output_filename(input_filename: str) -> str:
         name = name.replace('_0000', '')
     return name
 
+def is_nifti_file(filepath: str) -> bool:
+    """
+    Check if a file is a NIfTI file based on its extension.
+    
+    Args:
+        filepath: Path to the file
+        
+    Returns:
+        True if the file is a NIfTI file, False otherwise
+    """
+    filepath_lower = filepath.lower()
+    return filepath_lower.endswith('.nii.gz') or filepath_lower.endswith('.nii')
+
+def load_image(filepath: str) -> Tuple[np.ndarray, Optional[sitk.Image]]:
+    """
+    Load an image file (TIFF or NIfTI) and return the numpy array and optionally the SimpleITK image.
+    
+    Args:
+        filepath: Path to the image file
+        
+    Returns:
+        Tuple of (numpy_array, sitk_image). sitk_image is None for TIFF files.
+    """
+    if is_nifti_file(filepath):
+        print(f"Loading NIfTI file using SimpleITK...")
+        sitk_image = sitk.ReadImage(filepath)
+        numpy_array = sitk.GetArrayFromImage(sitk_image)
+        return numpy_array, sitk_image
+    else:
+        print(f"Loading TIFF file using tifffile...")
+        numpy_array = tiff.imread(filepath)
+        return numpy_array, None
+
+def save_image(filepath: str, image_array: np.ndarray, reference_image: Optional[sitk.Image] = None):
+    """
+    Save an image array to file (TIFF or NIfTI format).
+    
+    Args:
+        filepath: Path where the image should be saved
+        image_array: NumPy array containing the image data
+        reference_image: Optional SimpleITK image to use as reference for NIfTI files (for metadata)
+    """
+    if is_nifti_file(filepath):
+        print(f"Saving NIfTI file using SimpleITK...")
+        # Convert to uint16 if needed
+        if image_array.dtype != np.uint16:
+            image_array = image_array.astype(np.uint16)
+        
+        # Create SimpleITK image from numpy array
+        sitk_image = sitk.GetImageFromArray(image_array)
+        
+        # If reference image is provided, copy metadata (spacing, origin, direction)
+        if reference_image is not None:
+            sitk_image.SetSpacing(reference_image.GetSpacing())
+            sitk_image.SetOrigin(reference_image.GetOrigin())
+            sitk_image.SetDirection(reference_image.GetDirection())
+        
+        # Write the image
+        sitk.WriteImage(sitk_image, filepath, useCompression=True)
+        print("NIfTI file saved successfully with compression!")
+    else:
+        print(f"Saving TIFF file using tifffile...")
+        tiff.imwrite(
+            filepath,
+            image_array.astype(np.uint16),
+            compression="zlib"
+        )
+        print("TIFF file saved successfully with compression!")
+
 def main():
     available_models = ", ".join(get_model_names())
     parser = argparse.ArgumentParser(
         description="Perform 3D Automatic Instance Segmentation on nnUNet dataset using a µsam model."
     )
-    parser.add_argument("-d", "--dataset_path", required=True, help="Path to the nnUNet dataset root directory (e.g., Dataset002_MitoHardHan24).")
-    parser.add_argument("-l", "--label_path", default=None, help="(Optional) Path to a ground truth TIFF file. If provided, it will be used to filter the prediction.")
+    parser.add_argument("-d", "--dataset", type=str, required=True, 
+                        help="Dataset name or ID (e.g., Dataset001_MitoHardBeta or 1).")
+    parser.add_argument("-l", "--label_path", default=None, help="(Optional) Path to a ground truth file (TIFF or NIfTI). If provided, it will be used to filter the prediction.")
+    parser.add_argument("--mode", default="FT", help="Mode to use. Defaults to 'FT'. Available modes: FT, ZS. FT: Fine-tuning, ZS: Zero-shot.")
     parser.add_argument("--eval", action="store_true", help="Enable evaluation mode (will use instancesTs as ground truth).")
-    parser.add_argument("-m", "--model_type", default="vit_b_lm", help=f"The SAM model type to use. Defaults to 'vit_b_lm'. Available models: {available_models}")
+    parser.add_argument("-m", "--model_type", default="vit_b_em_organelles", help=f"The SAM model type to use. Defaults to 'vit_b_em_organelles'. Available models: {available_models}")
     parser.add_argument("--use_embeddings", action="store_true", help="Enable caching of image embeddings (saves .zarr files in output directory).")
     parser.add_argument("-c", "--checkpoint_path", default=None, help="(Optional) Path to a custom model checkpoint file.")
     parser.add_argument("--min_size", type=int, default=500, help="Minimum size (voxel count) for an instance to be kept. Default is 500.")
@@ -231,17 +312,30 @@ def main():
 
     args = parser.parse_args()
 
+    # Convert dataset name or ID to standard dataset name
+    dataset_name = maybe_convert_to_dataset_name(args.dataset)
+    
+    # Build dataset root directory
+    dataset_root = os.path.join(nnUNet_raw, dataset_name)
+    if not os.path.exists(dataset_root):
+        raise ValueError(f"Dataset directory does not exist: {dataset_root}")
+    
+    print(f"nnUNet_raw: {nnUNet_raw}")
+    print(f"Dataset input: {args.dataset}")
+    print(f"Dataset name: {dataset_name}")
+    print(f"Dataset root: {dataset_root}")
+
     # Get all input files from the dataset
-    print(f"Scanning dataset: {args.dataset_path}")
+    print(f"\nScanning dataset: {dataset_root}")
     try:
-        input_files = get_nnunet_input_files(args.dataset_path)
+        input_files = get_nnunet_input_files(dataset_root)
         print(f"Found {len(input_files)} file(s) to process")
     except ValueError as e:
         print(f"Error: {e}")
         return
     
     # Create output directory
-    output_dir = os.path.join(args.dataset_path, "imagesTs_microsam_finetune_pred")
+    output_dir = os.path.join(dataset_root, f"imagesTs_microsam_{args.mode}_pred")
     os.makedirs(output_dir, exist_ok=True)
     print(f"Output directory: {output_dir}")
     
@@ -255,13 +349,15 @@ def main():
         # Load image
         print(f"Loading image from {input_file}...")
         try:
-            image = tiff.imread(input_file)
+            image, reference_image = load_image(input_file)
             print(f"Image loaded with shape: {image.shape}")
         except FileNotFoundError:
             print(f"Error: File not found at {input_file}")
             continue
         except Exception as e:
             print(f"Error loading image: {e}")
+            import traceback
+            traceback.print_exc()
             continue
         
         # Generate embedding path if enabled
@@ -292,7 +388,7 @@ def main():
         if args.label_path:
             print(f"\nLoading label mask from: {args.label_path}")
             try:
-                label_mask = tiff.imread(args.label_path)
+                label_mask, _ = load_image(args.label_path)
                 if label_mask.shape != segmentation_result.shape:
                      print(f"Warning: Shape mismatch between prediction ({segmentation_result.shape}) and label mask ({label_mask.shape}). Skipping filtering.")
                 else:
@@ -303,6 +399,10 @@ def main():
 
             except FileNotFoundError:
                 print(f"Error: Label file not found at {args.label_path}. Skipping filtering.")
+            except Exception as e:
+                print(f"Error loading label file: {e}")
+                import traceback
+                traceback.print_exc()
 
         # Post-process the segmentation (filter small instances and relabel)
         segmentation_result = postprocess_segmentation(segmentation_result, min_size=args.min_size)
@@ -314,15 +414,13 @@ def main():
         # Save the segmentation result
         print(f"\nSaving segmentation to: {output_path} ...")
         try:
-            tiff.imwrite(
-                output_path,
-                segmentation_result.astype(np.uint16),
-                compression="zlib"
-            )
-            print("Segmentation saved successfully with compression!")
+            # Use reference_image for NIfTI files to preserve metadata
+            save_image(output_path, segmentation_result, reference_image=reference_image)
             output_files.append(output_path)
         except Exception as e:
             print(f"Error saving file: {e}")
+            import traceback
+            traceback.print_exc()
             continue
     
     print("\n" + "="*60)
@@ -331,8 +429,8 @@ def main():
     
     # If evaluation is enabled, evaluate against instancesTs
     if args.eval:
-        gt_dir = os.path.join(args.dataset_path, "instancesTs")
-        
+        gt_dir = os.path.join(dataset_root, "instancesTs")
+        mask_dir = os.path.join(dataset_root, "masksTs")
         if not os.path.exists(gt_dir):
             print(f"\nWarning: Ground truth directory not found: {gt_dir}")
             print("Skipping evaluation.")
@@ -347,6 +445,7 @@ def main():
                 results, summary = evaluate_directory(
                     pred_dir=output_dir,
                     gt_dir=gt_dir,
+                    mask_dir=mask_dir,
                     save_results=True
                 )
                 

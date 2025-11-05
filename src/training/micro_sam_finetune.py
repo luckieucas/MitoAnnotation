@@ -277,7 +277,7 @@ def get_dataloader(split, patch_shape, batch_size, train_instance_segmentation, 
     # Add a sampler to reject patches without foreground objects
     # This prevents "No foreground objects were found" errors during training
     sampler = torch_em.data.sampler.MinForegroundSampler(
-        min_fraction=0.001,  # Require at least 1% of patch to be foreground
+        min_fraction=0.05,  # Require at least 1% of patch to be foreground
         background_id=0,     # Background label is 0
         p_reject=1.0         # Always reject patches below threshold
     )
@@ -378,7 +378,7 @@ def main():
         "--model_type",
         type=str,
         default="vit_b",
-        choices=["vit_b", "vit_l", "vit_h", "vit_t", "vit_b_lm", "vit_l_lm", "vit_h_lm"],
+        choices=["vit_b", "vit_l", "vit_h", "vit_t", "vit_b_lm", "vit_l_lm", "vit_h_lm", "vit_b_em_organelles"],
         help="The SAM model type to use. Default: vit_b. Note: vit_h usually yields higher quality but trains slower."
     )
     

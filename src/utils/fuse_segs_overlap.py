@@ -199,7 +199,7 @@ def fuse_segmentation_list(pred_list: list, save_file: str = "res_tif/pred_mask_
                                            is_reset_label_ids=is_reset_label_ids)
 
     # Save the final fused segmentation
-    tifffile.imwrite(save_file, fused_seg.astype(np.int16))
+    tifffile.imwrite(save_file, fused_seg.astype(np.int16),compression="zlib")
     return fused_seg
 
 def fuse_adjacent_blocks(block1: Union[str, np.ndarray],
@@ -296,7 +296,7 @@ def fuse_adjacent_blocks(block1: Union[str, np.ndarray],
     
     # Save if path is provided
     if save_file:
-        tifffile.imwrite(save_file, fused_seg.astype(np.int16))
+        tifffile.imwrite(save_file, fused_seg.astype(np.int16),compression="zlib")
         print(f"Saved fused segmentation to: {save_file}")
     
     return fused_seg
@@ -365,7 +365,7 @@ def fuse_segmentations_different_directions(x_seg_tif: Union[str, np.ndarray],
         fused_seg = reset_mask_label_id(fused_seg)
 
     print(f"Unique fused_seg labels: {np.unique(fused_seg)}")
-    tifffile.imwrite(save_file, fused_seg.astype(np.int16))
+    tifffile.imwrite(save_file, fused_seg.astype(np.int16),compression="zlib")
     return fused_seg
 
 if __name__ == "__main__":
@@ -422,7 +422,7 @@ if __name__ == "__main__":
                                                filter_size=500,
                                                overlap_thresh=args.overlap_thresh,
                                                is_reset_label_ids=args.reset_label_ids)
-            tifffile.imwrite(save_path, fused_seg.astype(np.int16))
+            tifffile.imwrite(save_path, fused_seg.astype(np.int16),compression="zlib")
         else:
             pred_file1 = os.path.join(res_path, args.pred_file1)
             pred_file2 = os.path.join(res_path, args.pred_file2)
