@@ -1,3 +1,0 @@
-tifffile==2025.6.11
-micro-sam==1.6.0
-connected-components-3d==3.23.0
