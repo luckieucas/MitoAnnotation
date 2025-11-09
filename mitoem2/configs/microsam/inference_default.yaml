@@ -1,0 +1,38 @@
+# MicroSAM Inference Configuration
+# Default configuration for MicroSAM inference
+
+method: microsam
+mode: ZS  # Zero-shot mode
+
+dataset:
+  id: 1
+  name: null
+  root: null
+
+model:
+  model_type: vit_b_em_organelles  # SAM model type
+  checkpoint: null  # Optional: path to custom checkpoint
+
+inference:
+  min_size: 500
+  tile_shape:
+    - 512
+    - 512
+  halo:
+    - 16
+    - 16
+  use_embeddings: false
+  label_path: null  # Optional: path to label mask for filtering
+
+output:
+  model_dir: ./checkpoints
+  log_dir: null
+
+logging:
+  level: INFO
+  use_wandb: false
+  wandb_project: mitoem2
+  log_dir: null
+
+# Evaluation
+eval: true  # Enable evaluation if ground truth is available

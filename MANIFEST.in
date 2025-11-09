@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include requirements.txt
+include environment.yml
+include pyproject.toml
+recursive-include mitoem2/configs *.yaml *.yml
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]

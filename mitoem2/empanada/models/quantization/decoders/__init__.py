@@ -1,0 +1,1 @@
+from mitoem2.empanada.models.quantization.decoders.panoptic_deeplab import QuantizablePanopticDeepLabDecoder

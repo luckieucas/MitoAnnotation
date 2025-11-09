@@ -1,3 +1,20 @@
+Metadata-Version: 2.4
+Name: mitoem2
+Version: 0.1.0
+Summary: A comprehensive toolkit for mitochondria segmentation in EM images
+Home-page: https://github.com/weilab/mitoem2
+Author: MitoEM2 Team
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: black; extra == "dev"
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Dynamic: home-page
+Dynamic: requires-python
+
 # MitoEM2 - Mitochondria Segmentation Toolkit
 
 A comprehensive, production-ready toolkit for mitochondria segmentation in EM images. Supports three state-of-the-art methods: **MitoNet**, **MicroSAM**, and **nnUNet**.
@@ -33,7 +50,7 @@ pip install -e .
 The project requires:
 - Python >= 3.8
 - PyTorch >= 1.8
-- See  `environment.yml` for full dependencies
+- See `requirements.txt` and `environment.yml` for full dependencies
 
 ## Quick Start
 

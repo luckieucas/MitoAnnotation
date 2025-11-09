@@ -1,0 +1,17 @@
+MANIFEST.in
+README.md
+environment.yml
+pyproject.toml
+requirements.txt
+setup.py
+mitoem2/__init__.py
+mitoem2.egg-info/PKG-INFO
+mitoem2.egg-info/SOURCES.txt
+mitoem2.egg-info/dependency_links.txt
+mitoem2.egg-info/requires.txt
+mitoem2.egg-info/top_level.txt
+mitoem2/configs/defaults.yaml
+mitoem2/configs/microsam/inference_default.yaml
+mitoem2/configs/microsam/train_default.yaml
+mitoem2/configs/mitonet/inference_default.yaml
+mitoem2/configs/mitonet/train_default.yaml

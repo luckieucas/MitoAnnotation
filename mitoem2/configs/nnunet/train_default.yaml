@@ -1,0 +1,20 @@
+method: nnunet
+dataset:
+  id: Dataset001_MitoLE
+output:
+  model_dir: ./nnunet_runs
+logging:
+  level: INFO
+nnunet:
+  output_dir: ./nnunet_runs
+  fold: 0
+  trainer: nnUNetTrainer
+  max_epochs: 1000
+  skip_boundary: true
+  skip_plan: true
+  skip_training: true
+  skip_prediction: true
+  skip_postprocess: false
+  skip_evaluation: false
+
+

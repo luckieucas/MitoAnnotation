@@ -1,0 +1,47 @@
+# MicroSAM Training Configuration
+# Default configuration for MicroSAM fine-tuning
+
+method: microsam
+mode: FT  # Fine-tuning mode
+
+dataset:
+  id: 1
+  name: null
+  root: null
+
+model:
+  model_type: vit_b_em_organelles  # SAM model type
+  checkpoint: null
+
+training:
+  n_epochs: 1
+  batch_size: 1
+  patch_size: 512
+  n_objects_per_batch: 25
+  train_instance_segmentation: true
+
+inference:
+  min_size: 500
+  tile_shape:
+    - 512
+    - 512
+  halo:
+    - 16
+    - 16
+  use_embeddings: false
+
+output:
+  model_dir: ./checkpoints/microsam
+  log_dir: null
+
+logging:
+  level: INFO
+  use_wandb: false
+  wandb_project: mitoem2
+  log_dir: null
+
+# Evaluation
+eval: true
+
+# Post-training testing
+test_after_training: true
