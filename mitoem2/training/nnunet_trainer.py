@@ -11,6 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Optional
+import shutil  # Keep import
 
 import tifffile as tiff
 import numpy as np
@@ -66,7 +67,19 @@ class NNUNetTrainer:
 
             if not self.pipeline_config.skip_plan:
                 self.logger.info("=== Step 2: nnUNet plan & preprocess ===")
-                self._nnunet_plan_and_process()
+                
+                # --- Keep swap logic (start) ---
+                self.logger.info("Swapping label directories for nnU-Net preprocessing...")
+                self._swap_labels_for_preprocessing()
+                
+                try:
+                    self._nnunet_plan_and_process()
+                finally:
+                    # Ensure directories are restored even if preprocessing fails
+                    self.logger.info("Restoring original label directories...")
+                    self._restore_labels_after_preprocessing()
+                # --- Keep swap logic (end) ---
+                    
             else:
                 self.logger.info("=== Step 2: Skip nnUNet plan & preprocess ===")
 
@@ -166,19 +179,25 @@ class NNUNetTrainer:
             raise FileNotFoundError(f"Dataset directory not found: {self.dataset_dir}")
 
         self.images_tr_dir = self.dataset_dir / "imagesTr"
-        self.labels_tr_dir = self.dataset_dir / "labelsTr"
-        self.instances_tr_dir = self.dataset_dir / "instancesTr"
+        
+        # --- Keep path modifications (start) ---
+        # self.labels_tr_dir is the generated boundary labels (target)
+        self.labels_tr_dir = self.dataset_dir / "bc_labelsTr"
+        # self.instances_tr_dir is the 'labelsTr' folder expected by nnU-Net (contains instances)
+        self.instances_tr_dir = self.dataset_dir / "labelsTr"
+        # self.instances_tr_dir_backup is the temporary backup path for 'labelsTr' folder
+        self.instances_tr_dir_backup = self.dataset_dir / "labelsTr_TEMP_BACKUP"
+        # --- Keep path modifications (end) ---
+
         self.images_ts_dir = self.dataset_dir / "imagesTs"
-        self.instances_ts_dir = self.dataset_dir / "instancesTs"
+        self.instances_ts_dir = self.dataset_dir / "labelsTs"
         self.masks_ts_dir = self.dataset_dir / "masksTs"
         self.predictions_dir = self.dataset_dir / "imagesTs_pred"
         self.final_results_dir = self.dataset_dir / "imagesTs_pred_waterz"
-        self.boundary_masks_dir = self.dataset_dir / "boundary_masks"
 
         required_dirs = [
             self.images_tr_dir,
-            self.labels_tr_dir,
-            self.instances_tr_dir,
+            self.instances_tr_dir,  # Check if 'labelsTr' (instances) exists
             self.images_ts_dir,
         ]
         for path in required_dirs:
@@ -186,37 +205,127 @@ class NNUNetTrainer:
                 raise FileNotFoundError(f"Required nnUNet directory not found: {path}")
 
         for path in [
+            self.labels_tr_dir,  # Ensure 'bc_labelsTr' folder exists
             self.instances_ts_dir,
             self.masks_ts_dir,
             self.predictions_dir,
             self.final_results_dir,
-            self.boundary_masks_dir,
         ]:
             path.mkdir(parents=True, exist_ok=True)
 
+    # --- Restore _generate_boundary_masks ---
     def _generate_boundary_masks(self) -> None:
         """
         Generate boundary masks for training data.
+        (Restored to original 0, 1, 2 logic)
+        Read from: self.instances_tr_dir (i.e., 'labelsTr', contains instances)
+        Write to: self.labels_tr_dir (i.e., 'bc_labelsTr', used to store boundary labels)
         """
         try:
             from connectomics.data.utils.data_segmentation import seg_to_instance_bd
+            import SimpleITK as sitk
         except ImportError as exc:
             raise ImportError(
                 "connectomics is required for boundary mask generation."
             ) from exc
 
-        for label_file in sorted(self.instances_tr_dir.glob("*.tiff")):
-            label_volume = tiff.imread(label_file).astype(np.uint16)
-            binary = (label_volume > 0).astype(np.uint8)
-            contour = seg_to_instance_bd(binary, tsz_h=3)
-            contour[contour > 0] = 2
+        self.logger.info(
+            "Generating boundary (0/1/2) masks from %s -> %s",
+            self.instances_tr_dir,
+            self.labels_tr_dir
+        )
+        # Ensure target folder (bc_labelsTr) exists
+        self.labels_tr_dir.mkdir(parents=True, exist_ok=True)
 
-            combined = binary + contour
-            combined[combined > 2] = 1
+        # Search for .nii.gz files
+        label_files = sorted(self.instances_tr_dir.glob("*.nii.gz"))
+        if not label_files:
+            # If .nii.gz not found, try .nii
+            label_files = sorted(self.instances_tr_dir.glob("*.nii"))
+        
+        for label_file in label_files:
+            try:
+                # Read NIfTI file using SimpleITK
+                sitk_image = sitk.ReadImage(str(label_file))
+                label_volume = sitk.GetArrayFromImage(sitk_image).astype(np.uint16)
+                
+                # Preserve original metadata
+                spacing = sitk_image.GetSpacing()
+                origin = sitk_image.GetOrigin()
+                direction = sitk_image.GetDirection()
+                
+                # --- Original logic ---
+                binary = (label_volume > 0).astype(np.uint8)
+                contour = seg_to_instance_bd(binary, tsz_h=3)  # Assuming tsz_h=3 is desired
+                contour[contour > 0] = 2
 
-            output_path = self.labels_tr_dir / label_file.name
-            tiff.imwrite(output_path, combined.astype(np.uint8), compression="zlib")
-            self.logger.debug("Updated boundary mask: %s", output_path.name)
+                combined = binary + contour
+                combined[combined > 2] = 1  # Interior(1) + boundary(2) = 3, revert to interior(1)
+                # --- End of logic ---
+
+                # Save as .nii.gz using SimpleITK, preserving original metadata
+                output_path = self.labels_tr_dir / label_file.name
+                output_sitk = sitk.GetImageFromArray(combined.astype(np.uint8))
+                output_sitk.SetSpacing(spacing)
+                output_sitk.SetOrigin(origin)
+                output_sitk.SetDirection(direction)
+                sitk.WriteImage(output_sitk, str(output_path), useCompression=True)
+                self.logger.debug("Updated boundary mask: %s", output_path.name)
+            except Exception as e:
+                self.logger.error(f"Failed to create boundary mask for {label_file.name}: {e}")
+
+    # --- Keep _swap_labels_for_preprocessing ---
+    def _swap_labels_for_preprocessing(self) -> None:
+        """
+        Swap label directories for preprocessing.
+        1. Move {instances_tr_dir} (labelsTr) -> {instances_tr_dir_backup} (labelsTr_TEMP_BACKUP)
+        2. Move {labels_tr_dir} (bc_labelsTr) -> {instances_tr_dir} (labelsTr)
+        """
+        if self.instances_tr_dir_backup.exists():
+            self.logger.warning(
+                "Backup directory %s already exists. "
+                "This might be from a failed previous run. Attempting to clean up.",
+                self.instances_tr_dir_backup,
+            )
+            shutil.rmtree(self.instances_tr_dir_backup)
+        
+        if not self.instances_tr_dir.exists():
+                raise FileNotFoundError(f"Original instance directory {self.instances_tr_dir} not found for swap.")
+        if not self.labels_tr_dir.exists():
+            raise FileNotFoundError(f"Generated boundary directory {self.labels_tr_dir} not found for swap.")
+
+        # 1. mv labelsTr -> labelsTr_TEMP_BACKUP
+        shutil.move(str(self.instances_tr_dir), str(self.instances_tr_dir_backup))
+        
+        # 2. mv bc_labelsTr -> labelsTr
+        shutil.move(str(self.labels_tr_dir), str(self.instances_tr_dir))
+        self.logger.info("Label directories swapped for preprocessing.")
+
+    # --- Keep _restore_labels_after_preprocessing ---
+    def _restore_labels_after_preprocessing(self) -> None:
+        """
+        Restore original label directories.
+        1. Move {instances_tr_dir} (labelsTr, contains boundaries) -> {labels_tr_dir} (bc_labelsTr)
+        2. Move {instances_tr_dir_backup} (labelsTr_TEMP_BACKUP) -> {instances_tr_dir} (labelsTr)
+        """
+        if not self.instances_tr_dir.exists():
+            self.logger.error(
+                "Cannot restore: %s (boundary labels) is missing.", self.instances_tr_dir
+            )
+            return
+        if not self.instances_tr_dir_backup.exists():
+                self.logger.error(
+                "Cannot restore: %s (instance backup) is missing.", self.instances_tr_dir_backup
+            )
+                return
+
+        # 1. mv labelsTr -> bc_labelsTr
+        shutil.move(str(self.instances_tr_dir), str(self.labels_tr_dir))
+        
+        # 2. mv labelsTr_TEMP_BACKUP -> labelsTr
+        shutil.move(str(self.instances_tr_dir_backup), str(self.instances_tr_dir))
+        self.logger.info("Original label directories restored.")
+
 
     def _nnunet_plan_and_process(self) -> None:
         env = self._nnunet_env()
@@ -259,9 +368,15 @@ class NNUNetTrainer:
             str(self.pipeline_config.fold),
             "--save_probabilities",
         ]
+        self.logger.info("Running prediction command: %s", " ".join(cmd))  # Add logging
         self._run_subprocess(cmd, env=env, description="nnUNet prediction")
 
     def _postprocess_predictions(self) -> None:
+        self.logger.info(
+            "Running postprocessing from %s to %s",
+            self.predictions_dir,
+            self.final_results_dir
+        )
         process_folder(self.predictions_dir, self.final_results_dir, save_tiff=False, save_nii=True)
 
     def _evaluate_results(self) -> None:
@@ -269,6 +384,7 @@ class NNUNetTrainer:
         Evaluate predictions produced by the nnUNet pipeline.
         """
         pred_dir = self.final_results_dir if any(self.final_results_dir.glob("*")) else self.predictions_dir
+        self.logger.info("Evaluating results in: %s", pred_dir)  # Add logging
         if not pred_dir.exists():
             self.logger.warning("Prediction directory does not exist: %s", pred_dir)
             return
@@ -309,22 +425,22 @@ class NNUNetTrainer:
         for pred_file in prediction_files:
             file_ext = "".join(pred_file.suffixes) if pred_file.suffixes else pred_file.suffix
             if file_ext == ".nii.gz":
-                base_name = pred_file.name.replace("_seg", "").replace("_prediction", "").replace(file_ext, "")
+                # Fix: Ensure .nii.gz is correctly replaced
+                base_name = pred_file.name.replace("_seg", "").replace("_prediction", "").replace(".nii.gz", "")
             else:
                 base_name = pred_file.stem.replace("_seg", "").replace("_prediction", "")
 
             gt_file = None
             mask_file = None
 
-            candidate_exts = [file_ext] if file_ext else []
-            if file_ext == ".nii.gz":
-                candidate_exts.append(".nii")
-            elif file_ext == ".nii":
-                candidate_exts.append(".nii.gz")
-            elif file_ext in {".tiff", ".tif"}:
-                candidate_exts.extend([".tiff", ".tif"])
-            else:
-                candidate_exts.extend([".tiff", ".tif", ".nii.gz", ".nii"])
+            # Fix: Ensure candidate_exts includes original suffix
+            candidate_exts = [".tiff", ".tif", ".nii.gz", ".nii"]
+            if file_ext not in candidate_exts:
+                candidate_exts.insert(0, file_ext)
+            
+            # Remove duplicates
+            candidate_exts = sorted(list(set(candidate_exts)))
+
 
             for ext in candidate_exts:
                 candidate_gt = self.instances_ts_dir / f"{base_name}{ext}"
@@ -333,7 +449,8 @@ class NNUNetTrainer:
                     break
 
             if gt_file is None:
-                self.logger.warning("No ground truth found for %s", pred_file.name)
+                self.logger.warning("No ground truth found for %s (Base name: %s, Searched in: %s)", 
+                                    pred_file.name, base_name, self.instances_ts_dir)
                 continue
 
             for ext in candidate_exts:
@@ -341,6 +458,9 @@ class NNUNetTrainer:
                 if candidate_mask.exists():
                     mask_file = candidate_mask
                     break
+            
+            # if mask_file:
+            #     self.logger.debug("Found mask for %s: %s", pred_file.name, mask_file.name)
 
             self.logger.info("Evaluating %s against %s", pred_file.name, gt_file.name)
             try:
@@ -364,11 +484,11 @@ class NNUNetTrainer:
             )
 
             self.logger.info(
-                "Metrics for %s - accuracy: %.4f, precision: %.4f, recall: %.4f, F1: %.4f",
+                "Metrics for %s - PQ: %.4f, SQ: %.4f, RQ: %.4f, F1: %.4f",
                 pred_file.name,
-                results.get("accuracy", float("nan")),
-                results.get("precision", float("nan")),
-                results.get("recall", float("nan")),
+                results.get("PQ", float("nan")),
+                results.get("SQ", float("nan")),
+                results.get("RQ", float("nan")),
                 results.get("f1", float("nan")),
             )
 
@@ -431,4 +551,3 @@ class NNUNetTrainer:
 
 
 __all__ = ["NNUNetTrainer"]
-

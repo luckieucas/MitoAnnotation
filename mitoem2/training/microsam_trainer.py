@@ -543,9 +543,7 @@ class MicroSAMTrainer(BaseTrainer):
             logger.warning("No predictions were generated, skipping evaluation.")
             return
 
-        gt_dir = dataset_path / "instancesTs"
-        if not gt_dir.exists():
-            gt_dir = dataset_path / "labelsTs"
+        gt_dir = dataset_path / "labelsTs"
         mask_dir = dataset_path / "masksTs"
         mask_dir_path = mask_dir if mask_dir.exists() else None
 

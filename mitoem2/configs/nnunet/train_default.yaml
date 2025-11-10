@@ -10,11 +10,11 @@ nnunet:
   fold: 0
   trainer: nnUNetTrainer
   max_epochs: 1000
-  skip_boundary: true
-  skip_plan: true
+  skip_boundary: false
+  skip_plan: false
   skip_training: true
   skip_prediction: true
-  skip_postprocess: false
+  skip_postprocess: true
   skip_evaluation: false
 
 

@@ -553,10 +553,7 @@ class MitoNetTrainer(BaseTrainer):
             logger.info(f"Completed inference on {len(consensus_output_files)} test image(s)")
             
             # Run evaluation if ground truth is available
-            gt_dir = dataset_path / "instancesTs"
-            if not gt_dir.exists():
-                gt_dir = dataset_path / "labelsTs"
-            
+            gt_dir = dataset_path / "labelsTs"
             mask_dir = dataset_path / "masksTs"
             if not mask_dir.exists():
                 mask_dir = None
