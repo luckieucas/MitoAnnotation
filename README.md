@@ -5,7 +5,6 @@ A comprehensive, production-ready toolkit for mitochondria segmentation in EM im
 ## Features
 
 - **Unified Interface**: Consistent API for all three segmentation methods
-- **Installable Package**: No more `sys.path.append` - install as a Python package
 - **Configuration Management**: YAML-based configuration with dataclass validation
 - **Production-Ready**: Logging, checkpoint management, multi-GPU support, early stopping
 - **Extensible**: Easy to add new models or datasets

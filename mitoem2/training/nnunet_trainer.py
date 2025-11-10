@@ -136,7 +136,7 @@ class NNUNetTrainer:
         Initialise nnUNet directory structure similar to the legacy pipeline.
         """
         try:
-            from nnunetv2.paths import nnUNet_raw, nnUNet_preprocessed, nnUNet_results
+            from nnunetv2.paths import nnUNet_raw, nnUNet_preprocessed
         except ImportError as exc:
             raise ImportError(
                 "nnunetv2 must be installed and nnUNet paths configured. "
@@ -145,7 +145,14 @@ class NNUNetTrainer:
 
         self.nnunet_raw_dir = Path(nnUNet_raw).expanduser().resolve()
         self.nnunet_preprocessed_dir = Path(nnUNet_preprocessed).expanduser().resolve()
-        self.nnunet_results_dir = Path(nnUNet_results).expanduser().resolve()
+        results_base = (
+            Path(self.config.output.model_dir).expanduser().resolve()
+            if self.config.output.model_dir
+            else (Path("checkpoints") / "nnunet").resolve()
+        )
+        self.nnunet_results_dir = results_base
+        self.nnunet_results_dir.mkdir(parents=True, exist_ok=True)
+        self.config.output.model_dir = str(self.nnunet_results_dir)
 
         if not self.nnunet_raw_dir.exists():
             raise FileNotFoundError(f"nnUNet raw directory not found: {self.nnunet_raw_dir}")
@@ -153,7 +160,6 @@ class NNUNetTrainer:
             raise FileNotFoundError(
                 f"nnUNet preprocessed directory not found: {self.nnunet_preprocessed_dir}"
             )
-        self.nnunet_results_dir.mkdir(parents=True, exist_ok=True)
 
         self.dataset_dir = self.nnunet_raw_dir / self.dataset_name
         if not self.dataset_dir.exists():

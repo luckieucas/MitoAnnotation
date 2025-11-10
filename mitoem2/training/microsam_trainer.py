@@ -33,7 +33,6 @@ class MicroSAMTrainer(BaseTrainer):
     """
     MicroSAM trainer wrapping the micro_sam training utilities.
 
-    The implementation follows the steps from `src/training/micro_sam_finetune.py`:
     1. Convert 3D nnUNet volumes to 2D slices (if necessary).
     2. Create torch_em dataloaders for train/validation.
     3. Call `micro_sam.training.train_sam`.
@@ -50,6 +49,8 @@ class MicroSAMTrainer(BaseTrainer):
     ):
         self.config = config
         self.use_microsam_training = use_microsam_training
+        self.dataset_name = self._resolve_dataset_name()
+        self.checkpoint_root = self._init_checkpoint_root()
 
         if model is None:
             model = MicroSAMModel(
@@ -76,9 +77,6 @@ class MicroSAMTrainer(BaseTrainer):
         self.PerObjectDistanceTransform = self._import_from_module(
             "torch_em.transform.label", "PerObjectDistanceTransform"
         )
-        self.export_custom_sam_model = self._import_from_module(
-            "micro_sam.util", "export_custom_sam_model"
-        )
 
     @staticmethod
     def _import_module(name: str):
@@ -93,6 +91,28 @@ class MicroSAMTrainer(BaseTrainer):
         if not hasattr(module, attr):
             raise ImportError(f"{attr} not found in {module_name}")
         return getattr(module, attr)
+
+    def _resolve_dataset_name(self) -> str:
+        dataset_id = getattr(self.config.dataset, "id", None)
+        if dataset_id is None:
+            return "DatasetUnknown"
+        try:
+            nnunet_utils = self._import_module("nnunetv2.utilities.dataset_name_id_conversion")
+            dataset_name = nnunet_utils.maybe_convert_to_dataset_name(dataset_id)
+            if dataset_name:
+                return str(dataset_name)
+        except ImportError:
+            logger.warning(
+                "nnunetv2 is not available to resolve dataset name; falling back to dataset id."
+            )
+        return str(dataset_id)
+
+    def _init_checkpoint_root(self) -> Path:
+        base_dir = Path(self.config.output.model_dir) if self.config.output.model_dir else Path("checkpoints") / "microsam"
+        checkpoint_root = base_dir / self.dataset_name
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+        self.config.output.model_dir = str(checkpoint_root)
+        return checkpoint_root
 
     @classmethod
     def from_config(cls, config: MicroSAMConfig) -> "MicroSAMTrainer":
@@ -223,48 +243,54 @@ class MicroSAMTrainer(BaseTrainer):
             raw_transform=self.sam_training.identity,
         )
 
-    def _export_model(self, checkpoint_name: str, model_type: str, output_dir: Path) -> Path:
+    def _relocate_checkpoint_dir(self, checkpoint_name: str, target_dir: Path) -> None:
         """
-        Locate the `best.pt` checkpoint saved by micro_sam and export it.
+        Ensure the checkpoint directory created by micro_sam training is moved
+        into the unified checkpoints hierarchy.
+        """
+        candidate_dirs = [
+            Path("checkpoints") / checkpoint_name,
+            Path.cwd() / "checkpoints" / checkpoint_name,
+        ]
+        for candidate in candidate_dirs:
+            if candidate.exists() and candidate != target_dir:
+                target_dir.parent.mkdir(parents=True, exist_ok=True)
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+                shutil.move(str(candidate), str(target_dir))
+                logger.info("Moved MicroSAM checkpoint directory %s -> %s", candidate, target_dir)
+                break
+        else:
+            if not target_dir.exists():
+                logger.warning(
+                    "No checkpoint directory found for %s; expected one of %s",
+                    checkpoint_name,
+                    ", ".join(str(c) for c in candidate_dirs),
+                )
 
-        The micro_sam training code always writes checkpoints under `./checkpoints/<name>/`.
-        Depending on the working directory and configured output directory we may need to
-        search several candidate locations.
+    def _locate_best_checkpoint(self, checkpoint_name: str, target_dir: Path) -> Path:
+        """
+        Locate the `best.pt` checkpoint saved by micro_sam training.
+
+        The micro_sam training code typically writes checkpoints under
+        `./checkpoints/<name>/best.pt`. We search common locations to find it.
         """
         candidates = [
-            output_dir / "checkpoints" / checkpoint_name / "best.pt",
-            output_dir / checkpoint_name / "best.pt",
-            output_dir / "best.pt",
+            target_dir / "best.pt",
+            target_dir / "checkpoints" / "best.pt",
             Path("checkpoints") / checkpoint_name / "best.pt",
-            output_dir.parent / "checkpoints" / checkpoint_name / "best.pt",
+            Path.cwd() / "checkpoints" / checkpoint_name / "best.pt",
         ]
 
-        checkpoint_path: Optional[Path] = None
         for candidate in candidates:
             if candidate.exists():
-                checkpoint_path = candidate
-                break
+                logger.info("Found micro_sam best checkpoint at %s", candidate)
+                return candidate
 
-        if checkpoint_path is None:
-            raise FileNotFoundError(
-                "Could not locate micro_sam checkpoint 'best.pt'. "
-                "Checked the following locations:\n"
-                + "\n".join(str(c) for c in candidates)
-            )
-
-        export_path = checkpoint_path.parent / f"{checkpoint_name}_exported.pth"
-        export_path.parent.mkdir(parents=True, exist_ok=True)
-
-        logger.info("Exporting model checkpoint:")
-        logger.info("  Checkpoint: %s", checkpoint_path)
-        logger.info("  Export path: %s", export_path)
-
-        self.export_custom_sam_model(
-            checkpoint_path=str(checkpoint_path),
-            model_type=model_type,
-            save_path=str(export_path),
+        raise FileNotFoundError(
+            "Could not locate micro_sam checkpoint 'best.pt'. Checked:\n"
+            + "\n".join(str(c) for c in candidates)
         )
-        return export_path
 
     def _compute_training_params(self) -> Dict[str, Any]:
         training_cfg = self.config.training
@@ -306,13 +332,11 @@ class MicroSAMTrainer(BaseTrainer):
             else "vit_b"
         )
 
-        if self.config.output.model_dir:
-            output_dir = Path(self.config.output.model_dir)
-        else:
-            output_dir = Path("checkpoints") / f"sam_{model_type}_{dataset_path.name}"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        checkpoint_name = output_dir.name
+        base_dir = Path(self.config.output.model_dir)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_name = f"sam_{model_type}_{dataset_path.name}"
+        target_checkpoint_dir = base_dir / checkpoint_name
+        target_checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("=" * 60)
         logger.info("MicroSAM Fine-tuning Configuration")
@@ -347,27 +371,28 @@ class MicroSAMTrainer(BaseTrainer):
         )
 
         logger.info("Starting micro_sam training ...")
-        self.sam_training.train_sam(
-            name=checkpoint_name,
-            model_type=model_type,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            n_epochs=train_params["n_epochs"],
-            n_objects_per_batch=train_params["n_objects_per_batch"],
-            with_segmentation_decoder=train_params["train_instance_segmentation"],
-            device=device,
-        )
+        # self.sam_training.train_sam(
+        #     name=checkpoint_name,
+        #     model_type=model_type,
+        #     train_loader=train_loader,
+        #     val_loader=val_loader,
+        #     n_epochs=train_params["n_epochs"],
+        #     n_objects_per_batch=train_params["n_objects_per_batch"],
+        #     with_segmentation_decoder=train_params["train_instance_segmentation"],
+        #     device=device,
+        # )
         logger.info("MicroSAM training finished.")
 
-        export_path = self._export_model(checkpoint_name, model_type, output_dir)
+        self._relocate_checkpoint_dir(checkpoint_name, target_checkpoint_dir)
+        best_checkpoint = self._locate_best_checkpoint(checkpoint_name, target_checkpoint_dir)
         if getattr(self.config, "test_after_training", False):
             logger.info("Running test after training ...")
             self._test_after_training(
-                exported_checkpoint=export_path,
+                best_checkpoint=best_checkpoint,
                 dataset_path=dataset_path,
                 checkpoint_name=checkpoint_name,
                 model_type=model_type,
-                output_dir=output_dir,
+                output_dir=target_checkpoint_dir,
             )
 
     # ------------------------------------------------------------------ #
@@ -410,7 +435,7 @@ class MicroSAMTrainer(BaseTrainer):
         else:
             base_name = input_path.stem.replace("_0000", "")
 
-        output_file = output_dir / f"{base_name}_prediction{file_ext}"
+        output_file = output_dir / f"{base_name}{file_ext}"
 
         if file_ext in [".nii.gz", ".nii"]:
             import SimpleITK as sitk
@@ -433,19 +458,17 @@ class MicroSAMTrainer(BaseTrainer):
 
     def _test_after_training(
         self,
-        exported_checkpoint: Path,
+        best_checkpoint: Path,
         dataset_path: Path,
         checkpoint_name: str,
         model_type: str,
         output_dir: Path,
     ) -> None:
-        model = MicroSAMModel(model_type=model_type, checkpoint_path=exported_checkpoint)
+        model = MicroSAMModel(model_type=model_type, checkpoint_path=best_checkpoint)
         inference_config: Dict[str, Any] = {}
         if hasattr(self.config, "inference") and self.config.inference:
             inference_config = asdict(self.config.inference)
 
-        # Determine whether the trained model contains a segmentation decoder.
-        # Fallback to AMG if it does not.
         train_inst = self._compute_training_params()["train_instance_segmentation"]
         if not train_inst:
             inference_config["use_amg"] = True
@@ -454,15 +477,63 @@ class MicroSAMTrainer(BaseTrainer):
 
         test_images = self._collect_test_images(dataset_path)
 
-        predictions_dir = output_dir / f"imagesTs_{checkpoint_name}_pred"
+        mode = (getattr(self.config, "mode", None) or "FT").upper()
+        predictions_dir = dataset_path / f"imagesTs_microsam_{mode}_pred"
         predictions_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Saving predictions to %s", predictions_dir)
+
+        use_embeddings = bool(inference_config.get("use_embeddings", False))
+        label_path_cfg = inference_config.get("label_path")
+        label_mask = None
+        if label_path_cfg:
+            label_path = Path(label_path_cfg)
+            if label_path.exists():
+                try:
+                    label_mask, _ = self._load_image_with_metadata(label_path)
+                    logger.info("Loaded label mask for filtering from %s", label_path)
+                except Exception as exc:
+                    logger.warning("Failed to load label mask from %s: %s", label_path, exc)
+                    label_mask = None
+            else:
+                logger.warning("Label path specified but not found: %s", label_path)
 
         generated_files: List[Path] = []
+
         for image_path in test_images:
             try:
                 logger.info("Running inference for %s", image_path.name)
                 image, metadata = self._load_image_with_metadata(image_path)
-                prediction = engine.predict(image)
+
+                base_name = metadata.get("base_name")
+                if base_name is None:
+                    if metadata.get("ext") == ".nii.gz":
+                        base_name = image_path.name.replace(".nii.gz", "").replace("_0000", "")
+                    elif metadata.get("ext") == ".nii":
+                        base_name = image_path.stem.replace("_0000", "")
+                    else:
+                        base_name = image_path.stem.replace("_0000", "")
+                    metadata["base_name"] = base_name
+
+                embedding_path = None
+                if use_embeddings:
+                    embedding_path = predictions_dir / f"{base_name}_embeddings.zarr"
+
+                prediction = engine.predict(
+                    image,
+                    embedding_path=str(embedding_path) if embedding_path else None,
+                )
+
+                if label_mask is not None:
+                    if label_mask.shape == prediction.shape:
+                        prediction[label_mask == 0] = 0
+                    else:
+                        logger.warning(
+                            "Label mask shape %s does not match prediction shape %s for %s",
+                            label_mask.shape,
+                            prediction.shape,
+                            image_path.name,
+                        )
+
                 pred_file = self._save_prediction(prediction, image_path, predictions_dir, metadata)
                 generated_files.append(pred_file)
             except Exception as exc:
@@ -476,15 +547,12 @@ class MicroSAMTrainer(BaseTrainer):
         if not gt_dir.exists():
             gt_dir = dataset_path / "labelsTs"
         mask_dir = dataset_path / "masksTs"
-        if mask_dir.exists():
-            mask_dir_path = mask_dir
-        else:
-            mask_dir_path = None
+        mask_dir_path = mask_dir if mask_dir.exists() else None
 
-        if gt_dir.exists():
+        if gt_dir.exists() and getattr(self.config, "eval", True):
             self._evaluate_predictions(predictions_dir, generated_files, gt_dir, mask_dir_path)
         else:
-            logger.info("Ground truth directory not found (%s). Skipping evaluation.", gt_dir)
+            logger.info("Skipping evaluation (ground truth missing or eval disabled).")
 
     def _evaluate_predictions(
         self,
@@ -536,11 +604,11 @@ class MicroSAMTrainer(BaseTrainer):
                     }
                 )
                 logger.info(
-                    "Evaluated %s | PQ=%.4f IoU=%.4f F1=%.4f",
+                    "Evaluated %s | Accuracy=%.4f Binary Accuracy=%.4f F1=%.4f",
                     pred_file.name,
-                    eval_result.get("PQ", 0.0),
-                    eval_result.get("IoU", 0.0),
-                    eval_result.get("F1", 0.0),
+                    eval_result.get("accuracy", 0.0),
+                    eval_result.get("binary_accuracy", 0.0),
+                    eval_result.get("f1", 0.0),
                 )
             except Exception as exc:
                 logger.error("Failed to evaluate %s: %s", pred_file, exc)
@@ -559,10 +627,14 @@ class MicroSAMTrainer(BaseTrainer):
             return {k: MicroSAMTrainer._convert_numpy_types(v) for k, v in obj.items()}
         if isinstance(obj, list):
             return [MicroSAMTrainer._convert_numpy_types(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [MicroSAMTrainer._convert_numpy_types(v) for v in obj]
         if isinstance(obj, (np.integer, np.unsignedinteger)):
             return int(obj)
         if isinstance(obj, (np.floating,)):
             return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return obj

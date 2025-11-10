@@ -50,6 +50,8 @@ class MitoNetTrainer(BaseTrainer):
         """
         self.config = config
         self.use_empanada_finetune = use_empanada_finetune
+        self.dataset_name = self._resolve_dataset_name()
+        self.checkpoint_root = self._init_checkpoint_root()
 
         # Import empanada components from local source
         from mitoem2.utils.empanada_imports import (
@@ -133,6 +135,27 @@ class MitoNetTrainer(BaseTrainer):
         # Placeholder for potential future custom validation loop
         return {"loss": 0.0}
 
+    def _resolve_dataset_name(self) -> str:
+        dataset_id = getattr(self.config.dataset, "id", None)
+        if dataset_id is None:
+            return "DatasetUnknown"
+        try:
+            from nnunetv2.utilities.dataset_name_id_conversion import maybe_convert_to_dataset_name
+            dataset_name = maybe_convert_to_dataset_name(dataset_id)
+            if dataset_name:
+                return str(dataset_name)
+        except ImportError:
+            logger.warning("Could not import nnunetv2 utilities to resolve dataset name; using dataset id.")
+        return str(dataset_id)
+
+    def _init_checkpoint_root(self) -> Path:
+        base_dir = Path(self.config.output.model_dir) if self.config.output.model_dir else Path("checkpoints") / "mitonet"
+        checkpoint_root = base_dir / self.dataset_name
+        checkpoint_root.mkdir(parents=True, exist_ok=True)
+        # Update config to reflect resolved model directory
+        self.config.output.model_dir = str(checkpoint_root)
+        return checkpoint_root
+
     def _prepare_empanada_config(self) -> Dict[str, Any]:
         """
         Prepare empanada configuration dictionary from MitoNetConfig.
@@ -211,7 +234,10 @@ class MitoNetTrainer(BaseTrainer):
         # Update empanada config with training parameters
         empanada_config['model_name'] = self.config.model.model_name or "FinetunedMitoNet"
         empanada_config['TRAIN']['train_dir'] = str(train_dir)
-        empanada_config['TRAIN']['model_dir'] = str(Path(self.config.output.model_dir))
+        model_name = empanada_config['model_name']
+        checkpoint_dir = self.checkpoint_root / model_name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        empanada_config['TRAIN']['model_dir'] = str(checkpoint_dir)
         empanada_config['EVAL']['eval_dir'] = str(eval_dir)
         
         # Training parameters
